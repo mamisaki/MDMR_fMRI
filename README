@@ -1,0 +1,72 @@
+Refer example.py for an example script to run the longitudinal MDMR.
+MDMR.py is called from example.py
+
+Procedures in example.py:
+1. Setup
+The script read the data list from example/DataList.csv file.
+The list includes preprocessed fMRI files and regressor values, which will be
+used to make a design matrix for MDMR.
+
+line 40, 'MNI152_T1_2mm_brain_mask.nii.gz'
+The brain mask file should be in the same space (MNI) as the preprocessed
+function images, while the voxel resolution can be different.
+
+line 41, 'aseg.nii.gz'
+Segmentaion image made by FreeSurfer for MNI brain.
+
+2. Mask and downsampling
+This process need AFNI commands.
+The process includes resampling mask images (lines 68-), downsampling function
+images (lines 93-), and downsampling gray matter mask to create the MDMR mask.
+MDMR analysis will be done within the MDMR mask.
+
+3. Make connectivity matrices from downsampled images
+Connectivity matrix is calculated and saved in numpy binary file.
+Then, the data is loaded as memory-mapped data.
+
+4. Make the design matrix
+Make the design matrix for MDMR.
+R functions are used to make the matrix, X.
+Edit the model equation at line 219 according to the analysis.
+
+For a longitudinal analysis, 'SubjID' is included in the model to exclude the
+subject-wise average and test within-subject change between the sessions.
+Intercept is excluded from the model ('-1' in the equation) because the
+subject-wise average regressors have excluded the mean.
+
+lines 253-, Set nuisance variables
+Variables other than the nuisance variables are considered as the effect of
+interest. Permutation will be perfomed for the effect of interest variables in
+permutation test. The sum of effect of interest variables will be saved in the
+result.
+
+lines 264-, Set exchangability block
+Exchangability blocks define the blocks of permutation test. To make a null
+distiribution, the order of sessions are permuted within a subject
+(permute within the same value in exchBlk['within_block']), and then the order
+of subject is permuted keeping a block of subject (permute the order of blocks
+in exchBlk['whole_block'])
+
+5. Run MDMR
+Run the MDMR analysis and save the results in a pickle file and NIfTI image.
+
+lines 302-304, Set the parameters of MDMR.
+metric: metric of distance matrix between the connectivity maps. Any metrics
+defined in scipy.spatial.distance.pdist can be used. Default is 'euclidian'
+distance.
+chunk_size: Size of chunk; number of voxels processed at once. Reduce this
+number if available memory space is limited. chunk_size == None (default) means
+all data are processed at once.
+
+6. Cluster size permutation test
+Permutation test for evaluating the cluster-size corrected threshold.
+The results will be saved in example/stats/*ClusterThrPerm.[contrastname].txt
+file. Row is a voxel-wise p value and column is a corrected p value.
+
+
+
+
+
+
+
+
