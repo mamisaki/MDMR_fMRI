@@ -219,7 +219,7 @@ pandas2ri.activate()
 model = 'Session*Diagnosis+Sex+Age+Motion+SubjID-1'
 
 # --- Extract xdata from dala_list ---
-varnames0 = np.unique(re.split(r'[\+|\*|:]', model))
+varnames0 = np.setdiff1d(np.unique(re.split(r'[\+|\*|:|-]', model)), '1')
 xdata = dala_list[varnames0]
 
 # normalize Age, Motion variable
