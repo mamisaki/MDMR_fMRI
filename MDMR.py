@@ -185,6 +185,131 @@ def connectivity_matrix(fname, outfname, mask=None, SVCmask=None,
 
 
 # %% ##########################################################################
+def PPI_connectivity_matrix(fname, outfname, blkReg, mask=None, SVCmask=None,
+                            cast_float32=True):
+    """ Calculate Fisher's z-transformed corelation matrix (upper triangle
+        part) with PPI regressor (blkReg * seedts) and save the result in file.
+
+        If there are censored volumes, those are excluded from correlation
+        calculation.
+
+    Parameters
+    ----------
+    fname: string
+        filename of time-course image (4D BRIK or NIfTI)
+    outfname: string
+        Save result in nunpy binary data (.npy file)
+    blkReg: array
+        block timecourse regressor
+    mask: string or numerical array (optional)
+        whole-brain (all gray matter) mask for MDMR
+        string: mask filename (3D BRIK or NIfTI)
+        or
+        numerical array: mask data
+        If no mask is provided, voxels with all 0 time-course voxels are
+        masked, assuming that the common mask across subjects has already been
+        applied.
+     SVCmask: string or numerical array (optional)
+        MDMR mask for small volume correction (SVC)
+        string: mask filename (3D BRIK or NIfTI)
+        or
+        numerical array: mask data
+        If no mask is provided, voxels with all 0 time-course voxels are
+        masked, assuming that the common mask across subjects has already been
+        applied.
+
+    cast_float32: bool (optional, True in default)
+        Cast data to float32 for saving memory
+
+    Return
+    ------
+    No return varibale but the result is saved in outfname file.
+    The saved data is numpy array of half triangle of Fisher's z-transformed
+    corelation matrix between voxels (in the mask).
+    Use scipy.spatial.distance.squareform to reconstruct a full matrix.
+    """
+
+    srcVimg = nib.load(str(fname))
+    assert srcVimg.shape[-1] == len(blkReg), \
+        f"Missmatch data length ({srcVimg.shape[-1]}: {fname.name})" + \
+        f" from blkReg ({len(blkReg)})"
+
+    srcV = srcVimg.get_data()
+    Nt = srcV.shape[3]
+    src_flat_all = np.reshape(srcV, [-1, Nt])
+
+    # Mask
+    if mask is None:
+        mask_flat =\
+            np.nonzero(np.logical_not(np.all(src_flat_all == 0, axis=1)))[0]
+    elif isinstance(mask, string_types):
+        maskV = nib.load(mask).get_data()
+        mask_flat = maskV.flatten()
+    elif type(mask) == np.ndarray:
+        if not np.all(mask.shape == srcV.shape[:3]):
+            errmsg = "Mask dimension %s" % str(mask.shape)
+            errmsg += " mismatch with time-course image %s" \
+                % str(srcV.shape[:3])
+            assert np.all(mask.shape == srcV.shape[:3]), errmsg
+
+        mask_flat = mask.flatten()
+
+    # SVC Mask
+    if SVCmask is not None:
+        if isinstance(SVCmask, string_types):
+            SVCmaskV = nib.load(SVCmask).get_data()
+            SVCmask_flat = SVCmaskV.flatten()
+        elif type(SVCmask) == np.ndarray:
+            if not np.all(SVCmask.shape == srcV.shape[:3]):
+                errmsg = "SVC mask dimension %s" % str(SVCmask.shape)
+                errmsg += " mismatch with time-course image %s" \
+                    % str(srcV.shape[:3])
+                assert np.all(SVCmask.shape == srcV.shape[:3]), errmsg
+
+            SVCmask_flat = SVCmask.flatten()
+
+    # Masked data
+    src_flat = src_flat_all[mask_flat > 0, :]
+    if SVCmask is not None:
+        SVC_src_flat = src_flat_all[SVCmask_flat > 0, :]
+
+    del src_flat_all
+
+    # Remove censored volumes
+    rmvi = []
+    rmvi = np.nonzero(np.all(src_flat == 0, axis=0))[0]
+    if len(rmvi):
+        src_flat = np.delete(src_flat, rmvi, axis=1)
+        if SVCmask is not None:
+            SVC_src_flat = np.delete(SVC_src_flat, rmvi, axis=1)
+
+        blkReg = np.delete(blkReg, rmvi)
+
+    # Connectivity
+    if SVCmask is None:
+        # All voxel x voxel
+        PPI_src_flat = zscore(src_flat * blkReg, axis=1)
+        z_src_flat = zscore(src_flat, axis=1)
+        connmtx = np.dot(PPI_src_flat, z_src_flat.T)/len(blkReg)
+        triu_idx = np.triu_indices(connmtx.shape[0], 1)
+        connmtx = connmtx[triu_idx]
+    else:
+        # voxels in SVC mask x all voxels
+        allz = zscore(src_flat, axis=1)
+        PPI_svcz = zscore(np.dot(SVC_src_flat, blkReg), axis=1)
+        connmtx = np.dot(PPI_svcz, allz.T)/len(blkReg)
+        connmtx[np.abs(connmtx) >= 1.0] = np.nan
+
+    zconnmtx = np.arctanh(connmtx)
+    del connmtx
+    zconnmtx[np.isinf(zconnmtx)] = np.nan
+    if cast_float32:
+        zconnmtx = zconnmtx.astype(np.float32)
+
+    np.save(outfname, zconnmtx)
+
+
+# %% ##########################################################################
 def _slice_vectorized_dmtx(vdata, row=None, col=None, mdim=None,
                            rmdiag=True):
     """ Get slice of distance matrix from vectorized data
@@ -330,10 +455,11 @@ def run_MDMR(ConnMts, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
     metric : string
         distance metric (see scipy.spatial.distance.pdist)
         default is 'euclidean'
-    chunk_size : int
-        Size of chunk; number of voxels processed at once. Reduce this number
-        if available memory space is limited. chunk_size == None (default)
-        means all data are processed at once.
+    chunk_size : float (0, 1) or int
+        Size of chunk.  Reduce this number to save memory usage.
+        (0, 1) float: ratio of voxels processed at once.
+        int: number of voxels processed at once.
+        chunk_size == None (default): all data are processed at once.
     verb : bool
         whether to print progress message
 
@@ -389,6 +515,8 @@ def run_MDMR(ConnMts, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
     # Process for each chunk_size voxels
     if chunk_size is None or chunk_size > V:
         chunk_size = V
+    elif chunk_size > 0 and chunk_size < 1:
+        chunk_size = int(np.ceil(chunk_size * V))
 
     for chi, vst in enumerate(range(0, V, chunk_size)):
         vend = vst+chunk_size
