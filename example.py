@@ -5,7 +5,7 @@
 """
 
 
-# %% import ###################################################################
+# %% import ===================================================================
 from pathlib import Path
 import os
 import sys
@@ -25,13 +25,13 @@ from rpy2.robjects import pandas2ri
 import MDMR
 
 
-# %% 1. Setup #################################################################
+# %% 1. Setup =================================================================
 
 # Working directory
 work_dir = Path('example').resolve()
 
 # data list file
-dala_list_f = work_dir / 'DataList.csv'
+dala_list_f = work_dir / 'preproc_img_long' / 'DataList.csv'
 
 # Mask file directory
 mask_dir = work_dir / 'masks'
@@ -42,6 +42,7 @@ aseg = mask_dir / 'aseg.nii.gz'
 
 # downsampling voxel size (mm)
 dxyz = 4
+
 
 # %% --- Read data list. Create working directories ---
 # Read data list
@@ -64,7 +65,7 @@ if not out_dir.is_dir():
     out_dir.mkdir()
 
 
-# %% 2. Mask and downsampling #################################################
+# %% 2. Mask and downsampling =================================================
 # %%  --- Align mask to input images ---
 overwrite = False
 
@@ -92,6 +93,8 @@ if not gray_mask_res.is_file() or overwrite:
 
 # %% --- Downsampling function images ---
 """ Fill zero at out of the gray_mask_res and downsampling in dxyz-mm size """
+overwrite = False
+
 res_fnames = []
 for si, srcf in enumerate(src_fnames):
     fbase = srcf.name
@@ -121,6 +124,8 @@ for si, srcf in enumerate(src_fnames):
 
 
 # %% --- Down-sampling gray matter mask ---
+overwrite = False
+
 gray_mask_res_ds = mask_dir / f'MNI152_T1_2mm_gm_mask_res_{str(dxyz)}mm.nii.gz'
 if not gray_mask_res_ds.is_file() or overwrite:
     cmd = "3dfractionize -overwrite -clip 0.5 -template {res_fnames[0]}"
@@ -156,7 +161,7 @@ if not sigSD_mask_ds.is_file() or overwrite:
 
     # Overlap of SD images
     cmd = '3dmask_tool -overwrite'
-    cmd += f' -input ' + ' '.join([str(f) for f in sdfiles])
+    cmd += ' -input ' + ' '.join([str(f) for f in sdfiles])
     cmd += f' -prefix {sigSD_mask_ds} -frac 1.0'
     subprocess.call(cmd, shell=True)
 
@@ -168,7 +173,9 @@ if not mask_MDMR.is_file() or overwrite:
     subprocess.call(cmd, shell=True)
 
 
-# %% 3. Make connectivity matrices from downsampled images ####################
+# %% 3. Make connectivity matrices from downsampled images ====================
+overwrite = False
+
 st = time.time()
 print("-" * 80)
 print(f"Making connectivity matrix with {str(dxyz)}mm-resampled data",
@@ -177,7 +184,7 @@ print(f" ({time.ctime(st)})")
 sys.stdout.flush()
 
 mask_flat = []
-maskV = nib.load(str(mask_MDMR)).get_data()
+maskV = nib.load(str(mask_MDMR)).get_fdata()
 ConnMtx = [''] * len(res_fnames)
 for si, srcf in enumerate(res_fnames):
     dataid = srcf.stem.replace('.nii', '')
@@ -211,7 +218,7 @@ print(f"Finished ({dstr}, took {tt})\n")
 sys.stdout.flush()
 
 
-# %% 4. Make the design matrix: X #############################################
+# %% 4. Make design matrix: X =================================================
 R = robjects.r
 pandas2ri.activate()
 
@@ -229,7 +236,7 @@ if 'Motion' in xdata.columns:
     xdata.Motion = zscore(xdata.Motion)
 
 # --- Make design matrix on R ---
-R.assign('xdata', pandas2ri.py2ri(xdata))
+R.assign('xdata', pandas2ri.py2rpy(xdata))
 R('xdata$Session <- relevel(factor(xdata$Session), ref="1")')
 R('xdata$Diagnosis <- relevel(factor(xdata$Diagnosis), ref="HC")')
 
@@ -279,8 +286,8 @@ reg['nuisance'] = nuisance
 reg['exchBlk'] = exchBlk
 
 
-# %% 5. Run MDMR ##############################################################
-overwrite = False
+# %% 5. Run MDMR ==============================================================
+overwrite = True
 
 permnum = 10000  # number of permutation
 
@@ -336,7 +343,7 @@ if not respkl.is_file() or overwrite:
 
 
 # %% --- Save results in NIfTI file ---
-overwrite = False
+overwrite = True
 
 stat_f = out_dir / 'MDMR_Fstat_example.nii.gz'
 if not stat_f.is_file() or overwrite:
@@ -352,8 +359,8 @@ if not stat_f.is_file() or overwrite:
                          pthrs=[0.005, 0.001])
 
 
-# %% 6. Cluster size permutation test #########################################
-overwrite = False
+# %% 6. Cluster size permutation test =========================================
+overwrite = True
 
 # Load MDMR results
 with open(respkl, 'rb') as fd:

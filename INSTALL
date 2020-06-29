@@ -3,7 +3,3 @@ https://www.anaconda.com/distribution/
 
 2. Create an environment for MDMR with MDMR.yml file.
 conda env create -f MDMR.yml
-
-Note: rpy2 (v2.9) is sensitive to the versions of numpy and pandas.
-They should be numpy==1.15.4 and pandas==0.23.4
-MDMR.yml will install these versions.
