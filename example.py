@@ -31,7 +31,7 @@ import MDMR
 work_dir = Path('example').resolve()
 
 # data list file
-dala_list_f = work_dir / 'DataList.csv'
+dala_list_f = work_dir / 'preproc_img_long' / 'DataList.csv'
 
 # Mask file directory
 mask_dir = work_dir / 'masks'
