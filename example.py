@@ -287,7 +287,7 @@ reg['exchBlk'] = exchBlk
 
 
 # %% 5. Run MDMR ==============================================================
-overwrite = True
+overwrite = False
 
 permnum = 10000  # number of permutation
 

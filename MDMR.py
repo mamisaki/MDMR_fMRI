@@ -12,6 +12,7 @@ from __future__ import print_function
 
 
 # %% import ###################################################################
+from pathlib import Path
 import sys
 import time
 import datetime
@@ -944,15 +945,22 @@ def save_map_volume(outfname, F, pF, maskV, aff, pthrs=[0.005, 0.001]):
 
     # Save volume and set volume labels and stat parameters
     nim_out = nib.Nifti1Image(FV, aff)
-    nim_out.to_filename(outfname)
+    nib.save(nim_out, outfname)
 
     # Set volume labels
-    labs = [re.sub(r'\d\d_', '', l) for l in labs]
-    cmd = '3drefit -fbuc'
-    cmd += " -relabel_all_str '%s'" % ' '.join([l.replace(' ', '_')
-                                                for l in labs])
-    cmd += " %s" % outfname
-    subprocess.call(cmd, shell=True)
+    try:
+        labs = [re.sub(r'\d\d_', '', ll) for ll in labs]
+        cmd = '3drefit -fim'
+        cmd += " -relabel_all_str '%s'" % ' '.join([ll.replace(' ', '_')
+                                                    for ll in labs])
+        cmd += " %s" % outfname
+        subprocess.call(cmd, shell=True)
+    except Exception:
+        pass
+
+    lab_f = Path(outfname).stem.replace('.nii', '') + '_label.txt'
+    lab_f = Path(outfname).parent / lab_f
+    open(lab_f, 'w').write('\n'.join(labs))
 
 
 # %% ##########################################################################
