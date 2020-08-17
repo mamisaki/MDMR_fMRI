@@ -949,11 +949,13 @@ def save_map_volume(outfname, F, pF, maskV, aff, pthrs=[0.005, 0.001]):
 
     # Set volume labels
     try:
+        outfname1 = outfname.replace('.nii', '_afni.nii')
         labs = [re.sub(r'\d\d_', '', ll) for ll in labs]
-        cmd = '3drefit -fim'
+        cmd = f"3dcopy {outfname} {outfname1}; "
+        cmd += '3drefit -fim'
         cmd += " -relabel_all_str '%s'" % ' '.join([ll.replace(' ', '_')
                                                     for ll in labs])
-        cmd += " %s" % outfname
+        cmd += " %s" % outfname1
         subprocess.call(cmd, shell=True)
     except Exception:
         pass

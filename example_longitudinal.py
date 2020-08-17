@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""
+"""MDMR example for single session data.
 @author: mmisaki@librad.laureateinstitute.org
 """
 
@@ -31,7 +31,7 @@ import MDMR
 work_dir = Path('example').resolve()
 
 # data list file
-dala_list_f = work_dir / 'preproc_img_long' / 'DataList.csv'
+dala_list_f = work_dir / 'preproc_img' / 'DataList.csv'
 
 # Mask file directory
 mask_dir = work_dir / 'masks'
