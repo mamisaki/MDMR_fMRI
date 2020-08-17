@@ -332,7 +332,7 @@ if not respkl.is_file() or overwrite:
 
 
 # %% --- Save results in NIfTI file ---
-overwrite = True
+overwrite = False
 
 stat_f = out_dir / 'MDMR_Fstat_example.nii.gz'
 if not stat_f.is_file() or overwrite:
@@ -349,7 +349,7 @@ if not stat_f.is_file() or overwrite:
 
 
 # %% 6. Cluster size permutation test =========================================
-overwrite = True
+overwrite = False
 
 # Load MDMR results
 with open(respkl, 'rb') as fd:
