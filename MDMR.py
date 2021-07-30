@@ -5,13 +5,7 @@ Multivariate Distance Matrix Regression (MDMR)
 """
 
 
-# %% future ###################################################################
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
-
-# %% import ###################################################################
+# %% import ===================================================================
 from pathlib import Path
 import sys
 import time
@@ -31,9 +25,10 @@ from scipy import ndimage
 import nibabel as nib
 
 
-# %% ##########################################################################
+# %% _count_clustsize =========================================================
 def _count_clustsize(statmap, NN=1):
-    """Count cluster size
+    """
+    Count cluster size
 
     Parameters
     ----------
@@ -73,12 +68,13 @@ def _count_clustsize(statmap, NN=1):
     return cluster_sizes
 
 
-# %% ##########################################################################
+# %% connectivity_matrix ======================================================
 def connectivity_matrix(fname, outfname, mask=None, SVCmask=None,
                         cast_float32=True):
-    """ Calculate Fisher's z-transformed corelation matrix (upper triangle
-        part) and save the result in file.
-        If there are censored volumes, those are excluded from correlation
+    """
+    Calculate Fisher's z-transformed correlation matrix (upper triangle
+        part) and save the result in a file.
+        If there are censored volumes, those are excluded from the correlation
         calculation.
 
     Parameters
@@ -86,7 +82,7 @@ def connectivity_matrix(fname, outfname, mask=None, SVCmask=None,
     fname: string
         filename of time-course image (4D BRIK or NIfTI)
     outfname: string
-        Save result in nunpy binary data (.npy file)
+        Save the result in numpy binary data (.npy file)
     mask: string or numerical array (optional)
         whole-brain (all gray matter) mask for MDMR
         string: mask filename (3D BRIK or NIfTI)
@@ -109,12 +105,12 @@ def connectivity_matrix(fname, outfname, mask=None, SVCmask=None,
 
     Return
     ------
-    No return varibale but the result is saved in outfname file.
-    The saved data is numpy array of half triangle of Fisher's z-transformed
-    corelation matrix between voxels (in the mask).
+    No return variable, but the result is saved in the outfname file.
+    The saved data is a numpy array of a half triangle of Fisher's
+    z-transformed correlation matrix between voxels (in the mask).
     Use scipy.spatial.distance.squareform to reconstruct a full matrix.
-    """
 
+    """
     srcV = nib.load(fname).get_data()
     Nt = srcV.shape[3]
     src_flat_all = np.reshape(srcV, [-1, Nt])
@@ -185,67 +181,52 @@ def connectivity_matrix(fname, outfname, mask=None, SVCmask=None,
     np.save(outfname, zconnmtx)
 
 
-# %% ##########################################################################
-def PPI_connectivity_matrix(fname, outfname, blkReg, mask=None, SVCmask=None,
-                            cast_float32=True):
-    """ Calculate Fisher's z-transformed corelation matrix (upper triangle
-        part) with PPI regressor (blkReg * seedts) and save the result in file.
-
-        If there are censored volumes, those are excluded from correlation
-        calculation.
+# %% PPI_connectivity_matrix ==================================================
+def PPI_connectivity_matrix(srcV, blkReg, mask=None, cast_float32=True,
+                            verb=True):
+    """
+    Calculate PPI beta matrix between all voxels within the mask.
 
     Parameters
     ----------
-    fname: string
-        filename of time-course image (4D BRIK or NIfTI)
-    outfname: string
-        Save result in nunpy binary data (.npy file)
-    blkReg: array
-        block timecourse regressor
-    mask: string or numerical array (optional)
-        whole-brain (all gray matter) mask for MDMR
-        string: mask filename (3D BRIK or NIfTI)
-        or
-        numerical array: mask data
-        If no mask is provided, voxels with all 0 time-course voxels are
-        masked, assuming that the common mask across subjects has already been
-        applied.
-     SVCmask: string or numerical array (optional)
-        MDMR mask for small volume correction (SVC)
-        string: mask filename (3D BRIK or NIfTI)
-        or
-        numerical array: mask data
-        If no mask is provided, voxels with all 0 time-course voxels are
-        masked, assuming that the common mask across subjects has already been
-        applied.
+    srcV : 4D array
+        Function image time series. Noise components should be regressed out.
+    blkReg : TYPE
+        Block regressor. Must be the same length as the srcV.shape[-1].
+    mask : Path, str, or numerical array, optional
+        Gray matter mask for MDMR.
+        If Path or str, it is a mask filename (3D BRIK or NIfTI).
+        If Numerical array, it is the mask data arrary.
+        If None, voxels with all 0 in its time course are masked.
+        The default is None.
+    cast_float32 : TYPE, optional
+        DESCRIPTION. The default is True.
 
-    cast_float32: bool (optional, True in default)
-        Cast data to float32 for saving memory
+    Returns
+    -------
+    PPI_beta_Mtx : 2D array
+        PPI beta connectivity matrix (seed x voxels) between all voxels in the
+        mask.
 
-    Return
-    ------
-    No return varibale but the result is saved in outfname file.
-    The saved data is numpy array of half triangle of Fisher's z-transformed
-    corelation matrix between voxels (in the mask).
-    Use scipy.spatial.distance.squareform to reconstruct a full matrix.
     """
 
-    srcVimg = nib.load(str(fname))
-    assert srcVimg.shape[-1] == len(blkReg), \
-        f"Missmatch data length ({srcVimg.shape[-1]}: {fname.name})" + \
-        f" from blkReg ({len(blkReg)})"
+    # Check data length
+    assert len(blkReg) == srcV.shape[-1], \
+        f"Missmatch data length: srcV {srcV.shape[-1]} !=" + \
+        f" {len(blkReg)} blkReg"
 
-    srcV = srcVimg.get_data()
-    Nt = srcV.shape[3]
+    Nt = srcV.shape[-1]
     src_flat_all = np.reshape(srcV, [-1, Nt])
 
-    # Mask
+    # --- Mask ---
     if mask is None:
         mask_flat =\
             np.nonzero(np.logical_not(np.all(src_flat_all == 0, axis=1)))[0]
-    elif isinstance(mask, string_types):
+
+    elif isinstance(mask, string_types) or isinstance(mask, Path):
         maskV = nib.load(mask).get_data()
         mask_flat = maskV.flatten()
+
     elif type(mask) == np.ndarray:
         if not np.all(mask.shape == srcV.shape[:3]):
             errmsg = "Mask dimension %s" % str(mask.shape)
@@ -255,64 +236,48 @@ def PPI_connectivity_matrix(fname, outfname, blkReg, mask=None, SVCmask=None,
 
         mask_flat = mask.flatten()
 
-    # SVC Mask
-    if SVCmask is not None:
-        if isinstance(SVCmask, string_types):
-            SVCmaskV = nib.load(SVCmask).get_data()
-            SVCmask_flat = SVCmaskV.flatten()
-        elif type(SVCmask) == np.ndarray:
-            if not np.all(SVCmask.shape == srcV.shape[:3]):
-                errmsg = "SVC mask dimension %s" % str(SVCmask.shape)
-                errmsg += " mismatch with time-course image %s" \
-                    % str(srcV.shape[:3])
-                assert np.all(SVCmask.shape == srcV.shape[:3]), errmsg
-
-            SVCmask_flat = SVCmask.flatten()
-
-    # Masked data
+    # Apply mask
     src_flat = src_flat_all[mask_flat > 0, :]
-    if SVCmask is not None:
-        SVC_src_flat = src_flat_all[SVCmask_flat > 0, :]
-
     del src_flat_all
 
-    # Remove censored volumes
-    rmvi = []
-    rmvi = np.nonzero(np.all(src_flat == 0, axis=0))[0]
-    if len(rmvi):
-        src_flat = np.delete(src_flat, rmvi, axis=1)
-        if SVCmask is not None:
-            SVC_src_flat = np.delete(SVC_src_flat, rmvi, axis=1)
+    # --- PPI connectivity ---
+    PPI_flat = zscore(src_flat * blkReg[None, :], axis=1)
+    seed_flat = zscore(src_flat, axis=1)
+    Y = seed_flat.T
 
-        blkReg = np.delete(blkReg, rmvi)
+    # Orthogonalize seed_flat w.r.t PPI_flat
+    orth_b = np.sum(PPI_flat / PPI_flat.shape[1] * seed_flat, axis=1)
+    orth_seed_flat = seed_flat - orth_b[:, None] * PPI_flat
 
-    # Connectivity
-    if SVCmask is None:
-        # All voxel x voxel
-        PPI_src_flat = zscore(src_flat * blkReg, axis=1)
-        z_src_flat = zscore(src_flat, axis=1)
-        connmtx = np.dot(PPI_src_flat, z_src_flat.T)/len(blkReg)
-        triu_idx = np.triu_indices(connmtx.shape[0], 1)
-        connmtx = connmtx[triu_idx]
-    else:
-        # voxels in SVC mask x all voxels
-        allz = zscore(src_flat, axis=1)
-        PPI_svcz = zscore(np.dot(SVC_src_flat, blkReg), axis=1)
-        connmtx = np.dot(PPI_svcz, allz.T)/len(blkReg)
-        connmtx[np.abs(connmtx) >= 1.0] = np.nan
+    # Making X-hat for each seed
+    XhAll = None
+    Nvox = seed_flat.shape[0]
+    for vi in range(Nvox):
+        X = np.concatenate(
+            [PPI_flat[vi:vi+1, :], orth_seed_flat[vi:vi+1, :],
+             blkReg[None, :], np.ones((1, Nt))], axis=0).T
+        Nreg = X.shape[1]
+        denom = np.linalg.inv(np.dot(X.T, X))
+        Xh = np.dot(denom, X.T)
+        if XhAll is None:
+            XhAll = np.empty((Nreg * Nvox, Nt))
 
-    zconnmtx = np.arctanh(connmtx)
-    del connmtx
-    zconnmtx[np.isinf(zconnmtx)] = np.nan
+        XhAll[vi*Nreg:(vi+1)*Nreg, :] = Xh
+
+    # Calculate OLS betas for all seed x voxels
+    Ball = np.dot(XhAll, Y)
+
+    # Extract betas for the PPI (first) regressor
+    PPI_beta_Mtx = Ball[0::X.shape[1], :]
+
     if cast_float32:
-        zconnmtx = zconnmtx.astype(np.float32)
+        PPI_beta_Mtx = PPI_beta_Mtx.astype(np.float32)
 
-    np.save(outfname, zconnmtx)
+    return PPI_beta_Mtx
 
 
-# %% ##########################################################################
-def _slice_vectorized_dmtx(vdata, row=None, col=None, mdim=None,
-                           rmdiag=True):
+# %% _slice_vectorized_dmtx ===================================================
+def _slice_vectorized_dmtx(vdata, row=None, col=None, mdim=None, rmdiag=True):
     """ Get slice of distance matrix from vectorized data
 
     Parameters
@@ -382,7 +347,7 @@ def _slice_vectorized_dmtx(vdata, row=None, col=None, mdim=None,
     return out_mtx
 
 
-# %% ##########################################################################
+# %% _check_nan_connectivity ==================================================
 def _check_nan_connectivity(ConnMts, verb=True):
     """Check nan connectivity
     """
@@ -422,7 +387,7 @@ def _check_nan_connectivity(ConnMts, verb=True):
     return delvi
 
 
-# %% ##########################################################################
+# %% run_MDMR =================================================================
 def run_MDMR(ConnMts, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
              exchBlk=[], metric='euclidean', chunk_size=None, verb=True):
     """
@@ -922,7 +887,7 @@ def run_MDMR(ConnMts, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
     return F, pF, Fperm, maskrm
 
 
-# %% ##########################################################################
+# %% save_map_volume ==========================================================
 def save_map_volume(outfname, F, pF, maskV, aff, pthrs=[0.005, 0.001]):
 
     labs = sorted(F.keys())
@@ -965,7 +930,7 @@ def save_map_volume(outfname, F, pF, maskV, aff, pthrs=[0.005, 0.001]):
     open(lab_f, 'w').write('\n'.join(labs))
 
 
-# %% ##########################################################################
+# %% cluster_permutation ======================================================
 def cluster_permutation(F, Fperm_npy, maskV, OutPrefix='./', ananame='', NN=1,
                         pthrs=[0.005, 0.001], athrs=[0.05, 0.01], Nproc=0,
                         verb=True):
