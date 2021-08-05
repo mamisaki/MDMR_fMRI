@@ -1,5 +1,0 @@
-1. Install anaconda python
-https://www.anaconda.com/distribution/
-
-2. Create an environment for MDMR with MDMR.yml file.
-conda env create -f MDMR.yml
