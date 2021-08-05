@@ -1,4 +1,4 @@
-# Multidimensional Distance Matrix Regression (MDMR) analysis
+# Multidimensional Distance Matrix Regression (MDMR) analysis for fMRI
 
 Please cite the study below when you used this script.
 
