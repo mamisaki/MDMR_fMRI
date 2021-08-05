@@ -12,7 +12,7 @@ git clone https://github.com/mamisaki/MDMR_fMRI.git
 ```
 
 2. Install python packages  
-Here, anaconda is used.
+Anaconda (https://www.anaconda.com/) is used here.
 ```
 conda create -n MDMR python=3.8
 conda activate MDMR
@@ -38,7 +38,7 @@ Refer example_longitudinal.py for an example script to run the longitudinal MDMR
   Connectivity matrix is calculated and saved in a numpy binary file. The data is loaded as a memory-mapped numpy array.
 
 4. Make the design matrix  
-  R functions are used to make the matrix, X.  
+  R functions are used to make the design matrix, X.  
   Edit the model equation according to the analysis.  
   ```
   # --- Set model equation ---
