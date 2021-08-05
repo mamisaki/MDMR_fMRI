@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""MDMR example for single session data.
+"""
+MDMR example for a single session data.
 @author: mmisaki@librad.laureateinstitute.org
 """
 
@@ -11,10 +12,11 @@ import os
 import sys
 import re
 import pickle
-import datetime
+from datetime import timedelta
 import time
 import subprocess
 from scipy.stats import zscore
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -44,7 +46,7 @@ aseg = mask_dir / 'aseg.nii.gz'
 dxyz = 4
 
 
-# %% --- Read data list. Create working directories ---
+# %% --- Read data list and create working directories ---
 # Read data list
 dala_list = pd.read_csv(dala_list_f)
 
@@ -70,11 +72,11 @@ if not out_dir.is_dir():
 
 # %% 2. Mask and downsampling =================================================
 # %%  --- Align mask to input images ---
-overwrite = False
+OVERWRITE = False
 
 # Gray matter mask; Gray matter mask from FreeSurfer aseg
 gray_mask = mask_dir / 'MNI152_T1_2mm_gm_mask.nii.gz'
-if not gray_mask.is_file() or overwrite:
+if not gray_mask.is_file() or OVERWRITE:
     excludeIds = [0, 1, 2, 4, 5, 6, 7, 14, 15, 24,
                   40, 41, 43, 44, 45, 46, 72, 31, 63, 77,
                   251, 252, 253, 254, 255]
@@ -86,7 +88,7 @@ if not gray_mask.is_file() or overwrite:
 
 # Resample aseg gm mask in function image resolution
 gray_mask_res = mask_dir / 'MNI152_T1_2mm_gm_mask_res.nii.gz'
-if not gray_mask_res.is_file() or overwrite:
+if not gray_mask_res.is_file() or OVERWRITE:
     cmd = "3dfractionize -overwrite -clip 0.0"
     cmd += f" -template {brain_mask} -input {gray_mask}"
     cmd += f" -prefix {gray_mask_res}; "
@@ -96,7 +98,7 @@ if not gray_mask_res.is_file() or overwrite:
 
 # %% --- Downsampling function images ---
 """ Fill zero at out of the gray_mask_res and downsampling in dxyz-mm size """
-overwrite = False
+OVERWRITE = False
 
 res_fnames = []
 for si, srcf in enumerate(src_fnames):
@@ -105,7 +107,7 @@ for si, srcf in enumerate(src_fnames):
     outf = img_dir / fbase
     res_fnames.append(outf)
 
-    if not outf.is_file() or overwrite:
+    if not outf.is_file() or OVERWRITE:
         print(f"({si+1}/{len(src_fnames)}) Mask+resample image {srcf} ... ",
               end='')
         sys.stdout.flush()
@@ -127,17 +129,17 @@ for si, srcf in enumerate(src_fnames):
 
 
 # %% --- Down-sampling gray matter mask ---
-overwrite = False
+OVERWRITE = False
 
 gray_mask_res_ds = mask_dir / f'MNI152_T1_2mm_gm_mask_res_{str(dxyz)}mm.nii.gz'
-if not gray_mask_res_ds.is_file() or overwrite:
+if not gray_mask_res_ds.is_file() or OVERWRITE:
     cmd = "3dfractionize -overwrite -clip 0.5 -template {res_fnames[0]}"
     cmd += " -input {gray_mask_res} -prefix {gray_mask_res_ds}"
     subprocess.call(cmd, shell=True)
 
 # intersect of signal stdev mask
 sigSD_mask_ds = mask_dir / f'sigSDMask_{str(dxyz)}mm.nii.gz'
-if not sigSD_mask_ds.is_file() or overwrite:
+if not sigSD_mask_ds.is_file() or OVERWRITE:
     # Make SD images
     SDimg_dir = img_dir / 'SDimage'
     if not SDimg_dir.is_dir():
@@ -150,7 +152,7 @@ if not sigSD_mask_ds.is_file() or overwrite:
         fbase = srcf.name
         sdf = SDimg_dir / fbase.replace('errts', 'std')
         sdfiles.append(sdf)
-        if not sdf.is_file() or overwrite:
+        if not sdf.is_file() or OVERWRITE:
             print(f"({si+1}/{len(res_fnames)}) SD image for {srcf} ... ",
                   end='')
             sys.stdout.flush()
@@ -170,14 +172,14 @@ if not sigSD_mask_ds.is_file() or overwrite:
 
 # Create MDMR mask
 mask_MDMR = mask_dir / f'MDMRmask_{str(dxyz)}mm.nii.gz'
-if not mask_MDMR.is_file() or overwrite:
+if not mask_MDMR.is_file() or OVERWRITE:
     cmd = f"3dcalc -overwrite -a {gray_mask_res_ds} -b {sigSD_mask_ds}"
     cmd += f" -expr 'step(a)*step(b)' -prefix {mask_MDMR}"
     subprocess.call(cmd, shell=True)
 
 
-# %% 3. Make connectivity matrices from downsampled images ====================
-overwrite = False
+# %% 3. Make/Laod PPI connectivity matrices ===================================
+OVERWRITE = False
 
 st = time.time()
 print("-" * 80)
@@ -195,13 +197,13 @@ for si, srcf in enumerate(res_fnames):
     sys.stdout.flush()
 
     dfile = connMtx_dir / f'ConnMtx.{dataid}.npy'
-    if dfile.is_file() and not overwrite:
+    if dfile.is_file() and not OVERWRITE:
         # Load connectivity matrix from file
         if dfile.stat().st_mtime > os.stat(srcf).st_mtime:
             # Get npy file access
             try:
                 ConnMtx[si] = np.load(str(dfile), mmap_mode='r')
-                print(f"  Get memory-mapped data for {dfile}")
+                print(f"  Get memory-mapped data for {dfile.name}")
                 continue
             except Exception:
                 pass
@@ -209,19 +211,33 @@ for si, srcf in enumerate(res_fnames):
     # Make connectivity matrix
     print(f"  Making connectivity matrix from {srcf} ...", end='')
     sys.stdout.flush()
-    MDMR.connectivity_matrix(str(srcf), str(dfile), maskV)
+
+    # Load volume
+    srcV = nib.load(srcf).get_fdata()
+
+    # --- Remove censored TRs ---
+    censorTRs = np.argwhere(
+        np.all((srcV == 0).reshape([-1, srcV.shape[-1]]), axis=0)).ravel()
+    if len(censorTRs):
+        srcV = np.delete(srcV, censorTRs, axis=3)
+
+    zconnmtx = MDMR.connectivity_matrix(srcV, maskV)
+    np.save(dfile, zconnmtx)
+
     ConnMtx[si] = np.load(str(dfile), mmap_mode='r')
     print(" done")
     sys.stdout.flush()
 
 et = time.time()
 dstr = time.ctime(et)
-tt = str(datetime.timedelta(seconds=et-st)).split('.')[0]
+tt = str(timedelta(seconds=et-st)).split('.')[0]
 print(f"Finished ({dstr}, took {tt})\n")
 sys.stdout.flush()
 
 
 # %% 4. Make design matrix: X =================================================
+warnings.simplefilter('ignore', pd.core.common.SettingWithCopyWarning)
+
 R = robjects.r
 pandas2ri.activate()
 
@@ -234,17 +250,16 @@ xdata = dala_list[varnames0]
 
 # normalize Age, Motion variable
 if 'Age' in xdata.columns:
-    xdata.Age = zscore(xdata.Age)
+    xdata.loc[:, 'Age'] = zscore(xdata.Age)
 if 'Motion' in xdata.columns:
-    xdata.Motion = zscore(xdata.Motion)
+    xdata.loc[:, 'Motion'] = zscore(xdata.Motion)
 
 # --- Make design matrix on R ---
 R.assign('xdata', pandas2ri.py2rpy(xdata))
 R('xdata$Diagnosis <- relevel(factor(xdata$Diagnosis), ref="HC")')
 
 R('options(width=200)')
-mmrcmd = f"model.matrix(~{model}, xdata"
-mmrcmd += ', contrasts = list(Sess = "contr.sum"))'
+mmrcmd = f"model.matrix(~{model}, xdata)"
 X = R(mmrcmd)
 
 # Get variable names
@@ -260,7 +275,7 @@ for ni, vn in enumerate(varnames):
         varnames[ni] = vn.replace(':', 'x')
 
 # --- Set nuisance variables ---
-nuisance = np.zeros(len(varnames), dtype=np.bool)
+nuisance = np.zeros(len(varnames), dtype=bool)
 nuisance[np.argwhere(['Sex' in v for v in varnames]).ravel()] = True
 nuisance[np.array(varnames) == '(Intercept)'] = True
 nuisance[np.array(varnames) == 'Age'] = True
@@ -276,27 +291,27 @@ reg['exchBlk'] = []
 
 
 # %% 5. Run MDMR ==============================================================
-overwrite = False
+OVERWRITE = True
 
 permnum = 10000  # number of permutation
 
 respkl = out_dir / 'MDMR_Fstat_example.pkl'
-if not respkl.is_file() or overwrite:
+if not respkl.is_file() or OVERWRITE:
 
-    st = datetime.datetime.now()
+    st = time.time()
     print("="*80)
-    print(f"=== MDMR analysis (start at {str(st).split('.')[0]}) ===")
+    print(f"=== MDMR analysis (start at {time.ctime(st)}) ===")
     sys.stdout.flush()
 
     # Extract variables
     X = reg['X']
-    varnames = reg['varnames']
+    regnames = reg['varnames']
     nuisance = reg['nuisance']
     exchBlk = reg['exchBlk']
 
     # Run MDMR
     F, pF, Fperm, maskrm = \
-        MDMR.run_MDMR(ConnMtx, X, varnames, nuisance, permnum=permnum,
+        MDMR.run_MDMR(ConnMtx, X, regnames, nuisance, permnum=permnum,
                       exchBlk=exchBlk,  metric='euclidean', chunk_size=None)
 
     # Save result values
@@ -324,18 +339,16 @@ if not respkl.is_file() or overwrite:
     with open(respkl, 'wb') as fd:
         pickle.dump(MDMRres, fd)
 
-    et = datetime.datetime.now()
-    dstr = str(et).split('.')[0]
-    tt = str(et-st).split('.')[0]
-    print("Finished (%s, took %s)\n" % (dstr, tt))
+    tt = str(timedelta(seconds=time.time()-st)).split('.')[0]
+    print(f"Finished ({time.ctime()}, took {tt})\n")
     sys.stdout.flush()
 
 
 # %% --- Save results in NIfTI file ---
-overwrite = False
+OVERWRITE = False | OVERWRITE
 
 stat_f = out_dir / 'MDMR_Fstat_example.nii.gz'
-if not stat_f.is_file() or overwrite:
+if not stat_f.is_file() or OVERWRITE:
     # Load MDMR results
     with open(respkl, 'rb') as fd:
         MDMRres = pickle.load(fd)
@@ -349,7 +362,7 @@ if not stat_f.is_file() or overwrite:
 
 
 # %% 6. Cluster size permutation test =========================================
-overwrite = False
+OVERWRITE = False | OVERWRITE
 
 # Load MDMR results
 with open(respkl, 'rb') as fd:
@@ -362,7 +375,7 @@ for k in Fperm_npy.keys():
 
 # Check if the process complete
 out_prefix = str(out_dir / 'MDMR_example')
-if not overwrite:
+if not OVERWRITE:
     comp = True
     labs = sorted(F.keys())
     for ni in range(len(labs)):

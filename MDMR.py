@@ -9,14 +9,14 @@ Multivariate Distance Matrix Regression (MDMR)
 from pathlib import Path
 import sys
 import time
-import datetime
+from datetime import timedelta
 import re
 import subprocess
 import multiprocessing
 import pickle
 import gc
-from six import string_types
 
+from tqdm import tqdm
 import numpy as np
 from scipy.stats import zscore
 from scipy.spatial.distance import pdist, squareform
@@ -32,21 +32,21 @@ def _count_clustsize(statmap, NN=1):
 
     Parameters
     ----------
-    statmap: 3D array
-        (thresholded) statistical map to find clusters
-    NN: integer, optional
-        cluster definition code
+    statmap : 3D array
+        Thresholded statistical map to find clusters.
+    NN : integer, optional
+        Cluster definition code.
         1; faces touch
         2; faces or edges touch
         3; faces or edges or corners touch
-        default NN=1
+        The default is 1.
 
     Returns
     -------
-    cluster_sizes: array
-        cluster size distribution
-    """
+    cluster_sizes : array
+        Cluster size distribution.
 
+    """
     if NN == 1:
         NNstruct = np.array([[[0, 0, 0], [0, 1, 0], [0, 0, 0]],
                              [[0, 1, 0], [1, 1, 1], [0, 1, 0]],
@@ -69,98 +69,63 @@ def _count_clustsize(statmap, NN=1):
 
 
 # %% connectivity_matrix ======================================================
-def connectivity_matrix(fname, outfname, mask=None, SVCmask=None,
-                        cast_float32=True):
+def connectivity_matrix(srcV, maskV=None, SVCmask=None, cast_float32=True):
     """
-    Calculate Fisher's z-transformed correlation matrix (upper triangle
-        part) and save the result in a file.
-        If there are censored volumes, those are excluded from the correlation
-        calculation.
+    Calculate Fisher's z-transformed correlation matrix (upper triangle part).
 
     Parameters
     ----------
-    fname: string
-        filename of time-course image (4D BRIK or NIfTI)
-    outfname: string
-        Save the result in numpy binary data (.npy file)
-    mask: string or numerical array (optional)
-        whole-brain (all gray matter) mask for MDMR
-        string: mask filename (3D BRIK or NIfTI)
-        or
-        numerical array: mask data
-        If no mask is provided, voxels with all 0 time-course voxels are
-        masked, assuming that the common mask across subjects has already been
-        applied.
-     SVCmask: string or numerical array (optional)
-        MDMR mask for small volume correction (SVC)
-        string: mask filename (3D BRIK or NIfTI)
-        or
-        numerical array: mask data
-        If no mask is provided, voxels with all 0 time-course voxels are
-        masked, assuming that the common mask across subjects has already been
-        applied.
+    srcV : 4D array
+        Function image time series. Noise components should be regressed out.
+    maskV : 3D array, optional
+        Connectivity calculation mask. If None, voxels with all 0 time series
+        are masked. The default is None.
+    SVCmask : 3D array, optional
+        Mask of the seed voxels. If None, all voxels within maskV are used as
+        a seed.
+    cast_float32 : TYPE, optional
+        Cast connectivity matrix data to float32 to reduce the size.
+        The default is True.
 
-    cast_float32: bool (optional, True in default)
-        Cast data to float32 for saving memory
-
-    Return
-    ------
-    No return variable, but the result is saved in the outfname file.
-    The saved data is a numpy array of a half triangle of Fisher's
-    z-transformed correlation matrix between voxels (in the mask).
-    Use scipy.spatial.distance.squareform to reconstruct a full matrix.
+    Returns
+    -------
+    zconnmtx : 1D array
+        Half triangle of Fisher's z-transformed correlation matrix.
+        Use scipy.spatial.distance.squareform to reconstruct a full matrix.
 
     """
-    srcV = nib.load(fname).get_data()
     Nt = srcV.shape[3]
     src_flat_all = np.reshape(srcV, [-1, Nt])
 
-    # Mask
-    if mask is None:
+    # --- Mask ---
+    if maskV is None:
         mask_flat =\
             np.nonzero(np.logical_not(np.all(src_flat_all == 0, axis=1)))[0]
-    elif isinstance(mask, string_types):
-        maskV = nib.load(mask).get_data()
-        mask_flat = maskV.flatten()
-    elif type(mask) == np.ndarray:
-        if not np.all(mask.shape == srcV.shape[:3]):
-            errmsg = "Mask dimension %s" % str(mask.shape)
-            errmsg += " mismatch with time-course image %s" \
-                % str(srcV.shape[:3])
-            assert np.all(mask.shape == srcV.shape[:3]), errmsg
+    else:
+        if not np.all(maskV.shape == srcV.shape[:3]):
+            errmsg = f"Mask dimension {maskV.shape}"
+            errmsg += f" mismatch with time-course image {srcV.shape[:3]}"
+            assert np.all(maskV.shape == srcV.shape[:3]), errmsg
 
-        mask_flat = mask.flatten()
+        mask_flat = maskV.flatten()
 
     # SVC Mask
     if SVCmask is not None:
-        if isinstance(SVCmask, string_types):
-            SVCmaskV = nib.load(SVCmask).get_data()
-            SVCmask_flat = SVCmaskV.flatten()
-        elif type(SVCmask) == np.ndarray:
-            if not np.all(SVCmask.shape == srcV.shape[:3]):
-                errmsg = "SVC mask dimension %s" % str(SVCmask.shape)
-                errmsg += " mismatch with time-course image %s" \
-                    % str(srcV.shape[:3])
-                assert np.all(SVCmask.shape == srcV.shape[:3]), errmsg
+        if not np.all(SVCmask.shape == srcV.shape[:3]):
+            errmsg = f"SVC mask dimension {SVCmask.shape}"
+            errmsg += f" mismatch with time-course image {srcV.shape[:3]}"
+            assert np.all(SVCmask.shape == srcV.shape[:3]), errmsg
 
-            SVCmask_flat = SVCmask.flatten()
+        SVCmask_flat = SVCmask.flatten()
 
-    # Masked data
+    # Apply mask
     src_flat = src_flat_all[mask_flat > 0, :]
     if SVCmask is not None:
         SVC_src_flat = src_flat_all[SVCmask_flat > 0, :]
 
     del src_flat_all
 
-    # Remove censored volumes
-    rmvi = []
-    rmvi = np.nonzero(np.all(src_flat == 0, axis=0))[0]
-    if len(rmvi):
-        src_flat = np.delete(src_flat, rmvi, axis=1)
-        if SVCmask is not None:
-            SVC_src_flat = np.delete(SVC_src_flat, rmvi, axis=1)
-
-    # Connectivity
+    # --- PPI connectivity ---
     if SVCmask is None:
         # All voxel x voxel
         # 1 - (correlation pdst) = 1-(1-r) = r
@@ -178,11 +143,11 @@ def connectivity_matrix(fname, outfname, mask=None, SVCmask=None,
     if cast_float32:
         zconnmtx = zconnmtx.astype(np.float32)
 
-    np.save(outfname, zconnmtx)
+    return zconnmtx
 
 
 # %% PPI_connectivity_matrix ==================================================
-def PPI_connectivity_matrix(srcV, blkReg, mask=None, cast_float32=True,
+def PPI_connectivity_matrix(srcV, blkReg, maskV=None, cast_float32=True,
                             verb=True):
     """
     Calculate PPI beta matrix between all voxels within the mask.
@@ -193,14 +158,12 @@ def PPI_connectivity_matrix(srcV, blkReg, mask=None, cast_float32=True,
         Function image time series. Noise components should be regressed out.
     blkReg : TYPE
         Block regressor. Must be the same length as the srcV.shape[-1].
-    mask : Path, str, or numerical array, optional
-        Gray matter mask for MDMR.
-        If Path or str, it is a mask filename (3D BRIK or NIfTI).
-        If Numerical array, it is the mask data arrary.
-        If None, voxels with all 0 in its time course are masked.
-        The default is None.
+    maskV : 3D array, optional
+        Connectivity calculation mask. If None, voxels with all 0 time series
+        are masked. The default is None.
     cast_float32 : TYPE, optional
-        DESCRIPTION. The default is True.
+        Cast connectivity matrix data to float32 to reduce the size.
+        The default is True.
 
     Returns
     -------
@@ -219,22 +182,16 @@ def PPI_connectivity_matrix(srcV, blkReg, mask=None, cast_float32=True,
     src_flat_all = np.reshape(srcV, [-1, Nt])
 
     # --- Mask ---
-    if mask is None:
+    if maskV is None:
         mask_flat =\
             np.nonzero(np.logical_not(np.all(src_flat_all == 0, axis=1)))[0]
+    else:
+        if not np.all(maskV.shape == srcV.shape[:3]):
+            errmsg = f"Mask dimension {maskV.shape}"
+            errmsg += f" mismatch with time-course image {srcV.shape[:3]}"
+            assert np.all(maskV.shape == srcV.shape[:3]), errmsg
 
-    elif isinstance(mask, string_types) or isinstance(mask, Path):
-        maskV = nib.load(mask).get_data()
         mask_flat = maskV.flatten()
-
-    elif type(mask) == np.ndarray:
-        if not np.all(mask.shape == srcV.shape[:3]):
-            errmsg = "Mask dimension %s" % str(mask.shape)
-            errmsg += " mismatch with time-course image %s" \
-                % str(srcV.shape[:3])
-            assert np.all(mask.shape == srcV.shape[:3]), errmsg
-
-        mask_flat = mask.flatten()
 
     # Apply mask
     src_flat = src_flat_all[mask_flat > 0, :]
@@ -277,27 +234,32 @@ def PPI_connectivity_matrix(srcV, blkReg, mask=None, cast_float32=True,
 
 
 # %% _slice_vectorized_dmtx ===================================================
-def _slice_vectorized_dmtx(vdata, row=None, col=None, mdim=None, rmdiag=True):
-    """ Get slice of distance matrix from vectorized data
+def _slice_vectorized_dmtx(vdata, row=None, col=None, mdim=None):
+    """
+    Get a slice of distance matrix from a vectorized data
 
     Parameters
     ----------
-    vdata: numpy array
-        vectorized distance matrix
-    row: array
-        reading row indices
-    col: array
-        reading column indices
-    mdim: int
-        size of distance matrix
-    rmdiag: bool
-        whether to remove diagonal emements
+    vdata : array
+        Vectorized distance matrix.
+    row : array, optional
+        Reading row indices. If None, read all rows. The default is None.
+    col : array, optional
+        Reading column indices. If None, read all columns. The default is None.
+    mdim : int, optional
+        Size of the distance matrix. The default is None.
+
+    Raises
+    ------
+    ValueError
+        vdata is not a vectorized matrix of mdim x mdim.
 
     Returns
     -------
-    out_mtx: array
+    out_mtx : array
         len(row) x len(col) (or len(row) x (len(col)-1) if rmdiag==True),
-        matrix extracted from distance matrix.
+        matrix extracted from the distance matrix..
+
     """
 
     if mdim is None:
@@ -315,10 +277,7 @@ def _slice_vectorized_dmtx(vdata, row=None, col=None, mdim=None, rmdiag=True):
     else:
         col = np.array(col)
 
-    if rmdiag:
-        outshape = [len(row), len(col)-1]
-    else:
-        outshape = [len(row), len(col)]
+    outshape = [len(row), len(col)]
 
     out_mtx = np.zeros(outshape, dtype=vdata.dtype)
     # ri < ci area
@@ -329,10 +288,7 @@ def _slice_vectorized_dmtx(vdata, row=None, col=None, mdim=None, rmdiag=True):
             continue
 
         rdcols = col[widx]-(ri+1) + stp
-        if rmdiag:
-            out_mtx[iir, widx-1] = vdata[rdcols]
-        else:
-            out_mtx[iir, widx] = vdata[rdcols]
+        out_mtx[iir, widx] = vdata[rdcols]
 
     # ri > ci area
     for iic, ci in enumerate(col):
@@ -348,20 +304,25 @@ def _slice_vectorized_dmtx(vdata, row=None, col=None, mdim=None, rmdiag=True):
 
 
 # %% _check_nan_connectivity ==================================================
-def _check_nan_connectivity(ConnMts, verb=True):
-    """Check nan connectivity
+def _check_nan_connectivity(ConnMtx):
+    """
+    Find nan in any of ConnMtx item and return indices
+
+    Parameters
+    ----------
+    ConnMtx : list of arrays
+        List of connectivity matrix array (full or upper-triangle vector).
+
+    Returns
+    -------
+    delvi : array
+        List of nan element index.
+
     """
 
-    if verb:
-        st = time.time()
-        print("+++ Check NaN in connectivity maps (%s)" % time.ctime(st))
-        sys.stdout.flush()
-
     dmask = None  # nan mask
-    for si, cmtx in enumerate(ConnMts):
-        if verb:
-            print("\r    %d/%d ..." % (si+1, len(ConnMts)), end='')
-            sys.stdout.flush()
+    for cmtx in tqdm(ConnMtx, total=len(ConnMtx),
+                     desc='Check NaN in connectivity maps'):
 
         if dmask is None:
             dmask = np.isnan(cmtx)
@@ -381,90 +342,98 @@ def _check_nan_connectivity(ConnMts, verb=True):
         delvi = np.nonzero(dmask)
         delvi = np.array([[i, j] for i, j in zip(delvi[0], delvi[1])])
 
-    if verb:
-        print(' done')
-
     return delvi
 
 
 # %% run_MDMR =================================================================
-def run_MDMR(ConnMts, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
-             exchBlk=[], metric='euclidean', chunk_size=None, verb=True):
+def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
+             exchBlk={}, metric='euclidean', rmdiag=True, chunk_size=None,
+             rand_seed=0):
     """
     Multivariate Distance Matrix Regression (MDMR)
 
     Parameters
     ----------
-    ConnMts : list of ndarray
-        list of connectivity matrix (memory-mapped numpy data)
-    X : ndarray
-        design matrix
-    regnames : string array
-        regressor names
-    nuisance : bool array
-        whether a variable is nuisance (True) nor not (False)
-    contrast : dictionary of array
-        dictionary of contrast vectors.
-        Only positive values (sum of multiple effects, a.k.a F-contrast) is
-        supported.
-    permnum : int
-        number of permutation
-    exchBlk : dict of array
-        'within_block': list of block indice for permuting items within the
-                        same index. e.g. [0, 1, 2, 3, 4, 5] with
-                        exchBlk['within_block'][1, 1, 2, 2, 3, 3] will be
-                        permuted like [1,0,3,2,5,4]
-        'whole_block': list of block indice for permuting blocks with the
-                        same index as a whole. e.g. [0, 1, 2, 3, 4, 5] with
-                        exchBlk['whole_block'][1, 1, 2, 2, 3, 3] will be
-                        permuted like [4, 5, 2, 3, 0, 1]
-    metric : string
-        distance metric (see scipy.spatial.distance.pdist)
-        default is 'euclidean'
-    chunk_size : float (0, 1) or int
-        Size of chunk.  Reduce this number to save memory usage.
-        (0, 1) float: ratio of voxels processed at once.
+    ConnMtx : list of array
+        List of connectivity matrix.
+    X : array
+        Regressor matrix.
+    regnames : string array, optional
+        Regressor names. The default is [].
+    nuisance : bool array, optional
+        Falg od nuisance variables. The default is [].
+    contrast : dictionary of array, optional
+        Dictionary of contrast vectors. Only positive values (sum of multiple
+        effects; F-contrast) is supported. The default is {}.
+    permnum : int, optional
+        Number of permutation repeat. The default is 10000.
+    exchBlk : dictionar of array, optional
+        'within_block': Items with the same index are exchanged.
+            e.g. When exchBlk['within_block'] = [1, 1, 2, 2, 3, 3],
+            items [0, 1, 2, 3, 4, 5] will be permuted like [1, 0, 3, 2, 5, 4].
+        'whole_block': Items with the same index are exchanged as a block.
+            e.g. When exchBlk['whole_block'] = [1, 1, 2, 2, 3, 3],
+            items [0, 1, 2, 3, 4, 5] will be permuted like [2, 3, 4, 5, 0, 1].
+        The default is {} means all items are permuted without a restriction.
+    metric : str, optional
+        Distance metric (see scipy.spatial.distance.pdist).
+        The default is 'euclidean'.
+    rmdiag : bool, optional
+        Flag to remove (replaced with 0) diagonal elements.
+        The default is True.
+    chunk_size : float [0, 1] or int, optional
+        Size of a chunk.  Reduce this number to save memory usage.
+        [0, 1] float: ratio of voxels processed at once.
         int: number of voxels processed at once.
-        chunk_size == None (default): all data are processed at once.
-    verb : bool
-        whether to print progress message
+        None : all data are processed at once.
+        The default is None.
+    rand_seed : int, optional
+        Random seed. The default is 0.
 
     Returns
     -------
-    F, pF, Fperm
+    F : disct of array
+        F-value maps.
+    pF : disct of array
+        p-value maps.
+    Fperm : disct of array
+        F-values with permuted regressors.
+    maskrm : array
+        Masked out voxel indices.
 
     Notes
     -----
     Shehzad et al. 2014 NeuroImage
+
     """
+    np.random.seed(rand_seed)
 
     X = np.array(X)
-    nuisance = np.array(nuisance, dtype=np.bool)
+    nuisance = np.array(nuisance, dtype=bool)
 
     if len(regnames) == 0:
         # Set names of regressor variables
         for xi in range(X.shape[1]):
-            regnames.append('var%d' % xi+1)
+            regnames.append(f'var{xi+1}')
 
     # Check nan in connectivity matrices
-    maskrm = _check_nan_connectivity(ConnMts, verb)
+    maskrm = _check_nan_connectivity(ConnMtx)
     """
     Connectivity within the same voxel is NaN so that the same number of
-    connectivity as row size of ConnMts (number of source voxels) could be in
+    connectivity as row size of ConnMtx (number of source voxels) could be in
     maskrm.
     """
 
     # -- Prepare vectorized dependent variable, vG ----------------------------
-    if verb:
-        print("+++ Making vectorized multivariate distance matrix (%s)"
-              % time.ctime())
-        sys.stdout.flush()
+    print("+++ Making vectorized multivariate distance matrix ",
+          f"({time.ctime()})")
+    sys.stdout.flush()
 
     # N: samples, V: data points (voxels), D: variable dimension
-    N = len(ConnMts)
-    cmtx = ConnMts[0]
+    N = len(ConnMtx)
+    cmtx = ConnMtx[0]
     if cmtx.ndim == 1:
-        V = int(np.ceil(np.sqrt(ConnMts[0].shape[0] * 2)))
+        V = int(np.ceil(np.sqrt(ConnMtx[0].shape[0] * 2)))
         V2 = V
     else:
         V, V2 = cmtx.shape
@@ -490,12 +459,8 @@ def run_MDMR(ConnMts, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
             vend = V
 
         # Loading connectivity maps
-        if verb:
-            st = datetime.datetime.now()
-            if chunk_size != V:
-                print(" - chunk %d/%d -" % (chi+1, int(np.ceil(V/chunk_size))))
-            print("    Loading connectivity maps for %d:%d/%d voxels ..."
-                  % (vst, vend, V))
+        if chunk_size != V:
+            print(f"-- Chunk {chi+1}/{int(np.ceil(V/chunk_size))} --")
             sys.stdout.flush()
 
         vn = vend-vst
@@ -508,70 +473,52 @@ def run_MDMR(ConnMts, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
 
         if V == V2:
             # all pairwise correlation
-            # diagonal will be deleted
-            Ychunk = np.zeros([len(ConnMts), len(cols)-1, len(rows)],
+            Ychunk = np.zeros([len(ConnMtx), len(cols), len(rows)],
                               dtype=np.float32)
         else:
             # small volume MDMR mask is used
-            Ychunk = np.zeros([len(ConnMts), len(cols), len(rows)],
+            Ychunk = np.zeros([len(ConnMtx), len(cols), len(rows)],
                               dtype=np.float32)
 
-        for si, cmtx in enumerate(ConnMts):
-            if verb:
-                print("\r    %d/%d" % (si+1, N), end='')
-                sys.stdout.flush()
-
+        for si, cmtx in tqdm(enumerate(ConnMtx), total=len(ConnMtx),
+                             desc='Loading connectivity maps'):
             if chunk_size == V:
                 # Read all
                 if cmtx.ndim == 1:
                     connMtx = squareform(cmtx)
                 else:
                     connMtx = cmtx.copy()
-                np.isnan(cmtx)
 
-                if maskrm.ndim == 1 and len(maskrm):
+                if rmdiag:
+                    # Reaplce diagonal with 0
+                    connMtx -= np.diag(np.diag(connMtx))
+
+                if len(maskrm):
                     # Remove voxels with nan
                     connMtx = np.delete(connMtx, maskrm, axis=0)
                     connMtx = np.delete(connMtx, maskrm, axis=1)
 
-                if cmtx.ndim == 1:
-                    # Remove diagonal
-                    connMtx = np.triu(connMtx)[:, 1:] + \
-                        np.tril(connMtx)[:, :-1]
-
-                Ychunk[si, :, :] = connMtx.T
             else:
                 # Read partial
                 if cmtx.ndim == 1:
-                    connMtx = _slice_vectorized_dmtx(cmtx, row=rows, col=cols,
-                                                     rmdiag=True)
+                    connMtx = _slice_vectorized_dmtx(cmtx, row=rows, col=cols)
                 else:
                     ixgrid = np.ix_(rows, cols)
                     connMtx = cmtx[ixgrid]
 
-                Ychunk[si, :, :] = connMtx.T
+                if rmdiag:
+                    # Reaplce diagonal with 0
+                    diag_mask = np.concatenate(
+                        [(cols == ri)[None, :] for ri in rows], axis=0)
+                    connMtx[diag_mask] = 0.0
 
+            Ychunk[si, :, :] = connMtx.T
             del connMtx
 
-        if verb:
-            et = datetime.datetime.now() - st
-            print(' done (took %s)' % str(et).split('.')[0])
-
         # Multivariate distance matrix
-        if verb:
-            st = datetime.datetime.now()
-            print("    Calculating vectorized distance matrix ...")
-            sys.stdout.flush()
-
-        prc_intv = 1
-        next_prc = prc_intv
-        for ii, vi in enumerate(range(vst, vend)):
-            if (vi+1)/float(V)*100 > next_prc and verb:
-                print("\r    %.2f%%" % ((vi+1)/float(V)*100), end="")
-                sys.stdout.flush()
-                next_prc += prc_intv
-                time.sleep(1)
-
+        vidxs = list(range(vst, vend))
+        for ii, vi in tqdm(enumerate(vidxs), total=len(vidxs),
+                           desc='Calculating vectorized distance matrix'):
             if maskrm.ndim == 1:
                 D = squareform(pdist(Ychunk[:, :, ii], metric))
             else:
@@ -588,16 +535,10 @@ def run_MDMR(ConnMts, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
             vG[:, vi] = G.flatten(order='F')  # vG should be column order ('F')
 
         del Ychunk
-        if verb:
-            et = datetime.datetime.now()-st
-            print("\r    %.2f%% done (took %s)"
-                  % ((vi+1)/float(V)*100, str(et).split('.')[0]))
-            sys.stdout.flush()
 
     # -- Prepare permutation test and set real value as the first permutation -
-    if verb:
-        print("+++ MDMR with permutation test (%s) ..." % time.ctime())
-        sys.stdout.flush()
+    print(f"+++ MDMR with permutation test ({time.ctime()}) ...")
+    sys.stdout.flush()
 
     """
     H = np.dot(np.dot(X, np.linalg.inv(np.dot(X.T, X))), X.T)  # Hat matrix
@@ -656,10 +597,6 @@ def run_MDMR(ConnMts, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
             vHp[lab][0, :] = H2.flatten()
 
     # -- Make permuted regressor matrices -------------------------------------
-    if verb:
-        print("    prepare permuted regressors ...", end='')
-        sys.stdout.flush()
-
     # Xn: nuisance regressors
     Xn = X[:, np.nonzero(nuisance)[0]]
     # Xi: effect of interest regressors
@@ -674,11 +611,13 @@ def run_MDMR(ConnMts, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
     for ei in range(Xi.shape[1]):
         perpat[ei] = np.array([','.join([str(v) for v in Xi[:, ei]])])
 
-    for pn in range(1, permnum):
+    for pn in tqdm(range(1, permnum), total=permnum-1,
+                   desc='Preparing permuted regressors'):
         # Search unique random permutation
         retry = True  # loop flag
         nt = 1  # number of tries
-        while retry or nt > permnum:
+        MaxTry = 10000
+        while retry or nt > MaxTry:
             if len(exchBlk) == 0:
                 # Permute all randomly
                 permidx = np.random.permutation(N)
@@ -724,16 +663,15 @@ def run_MDMR(ConnMts, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
                     nt += 1
                     break
 
+            # -- End while loop to find a unique permutation --
+
         if not retry:
             # Save permutation pattern
             for ei in range(Xi.shape[1]):
                 pat = [','.join([str(v) for v in Xi[permidx, ei]])]
                 perpat[ei] = np.append(perpat[ei], pat)
-            if verb:
-                print("\r    prepare permuted regressors ... %d/%d" %
-                      (pn+1, permnum), end='')
-                sys.stdout.flush()
         else:
+            # Could not find a unique permutation for MaxTry times
             break
 
         # Make permuted design matrix
@@ -779,14 +717,9 @@ def run_MDMR(ConnMts, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
                 Hp2 = Hp-Hpn
                 vHp[lab][pn, :] = Hp2.flatten()
 
-    if not retry:
-        if verb:
-            print("\r    prepare permuted regressors ... %d/%d done" %
-                  (pn+1, permnum))
-            sys.stdout.flush()
-    else:
-        errmsg = "\nMore than %d unique permutation cannot be found.\n" % pn
-        errmsg += "\nPermutation number is reduced to %s\n" % (pn-1,)
+    if retry:
+        errmsg = f"\nMore than {pn} unique permutation cannot be found.\n"
+        errmsg += f"\nPermutation number is reduced to {pn-1}\n"
         sys.stderr.write(errmsg)
 
         vRp = vRp[:pn, :]
@@ -806,9 +739,8 @@ def run_MDMR(ConnMts, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
                 vHp[lab] = vHp[lab][:pn, :]
 
     # -- Get F and p values ---------------------------------------------------
-    if verb:
-        print("    evaluate F and p values ...")
-        sys.stdout.flush()
+    print("\n+++ Evaluate F and p values ...")
+    sys.stdout.flush()
 
     F = {}
     pF = {}
@@ -875,21 +807,38 @@ def run_MDMR(ConnMts, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
     # -- Return ---------------------------------------------------------------
     # Relabel results
     for li, lab in enumerate(sortedLabels):
-        replab = '%02d_%s' % (li, lab)
+        replab = f'{li:02d}_{lab}'
         for v in (F, pF, Fperm):
             v[replab] = v[lab]
             del v[lab]
 
-    if verb:
-        print(" done (%s)" % time.ctime())
-        sys.stdout.flush()
+    print(f"Done ({time.ctime()})")
+    sys.stdout.flush()
 
     return F, pF, Fperm, maskrm
 
 
 # %% save_map_volume ==========================================================
 def save_map_volume(outfname, F, pF, maskV, aff, pthrs=[0.005, 0.001]):
+    """
+    Save statistical maps in a nii.gz file.
 
+    Parameters
+    ----------
+    outfname : str or Path
+        Output filename.
+    F : list of 3D array
+        List of F-value maps.
+    pF : list of 3D array
+        List of p-value maps.
+    maskV : 3D array
+        Mask volume.
+    aff : array
+        Affine matrix for the saved image.
+    pthrs : list of float, optional
+        List of p-value thresholds. The default is [0.005, 0.001].
+
+    """
     labs = sorted(F.keys())
     FV = np.zeros(list(maskV.shape)+[len(F)])
     for ni in range(len(F)):
@@ -906,36 +855,66 @@ def save_map_volume(outfname, F, pF, maskV, aff, pthrs=[0.005, 0.001]):
             Fvals[pF[labs[ni]] > pthr] = 0
             Fn[maskV > 0] = Fvals
             FV = np.append(FV, Fn[:, :, :, np.newaxis], axis=3)
-            labs.append(labs[ni]+'(p<%s)' % str(pthr))
+            labs.append(labs[ni] + f'(p<{pthr})')
 
     # Save volume and set volume labels and stat parameters
     nim_out = nib.Nifti1Image(FV, aff)
     nib.save(nim_out, outfname)
 
     # Set volume labels
+    outfname = Path(outfname)
     try:
-        outfname1 = outfname.replace('.nii', '_afni.nii')
+        outfname1 = outfname.parent / \
+            outfname.name.replace('.nii', '_afni.nii')
         labs = [re.sub(r'\d\d_', '', ll) for ll in labs]
         cmd = f"3dcopy {outfname} {outfname1}; "
         cmd += '3drefit -fim'
-        cmd += " -relabel_all_str '%s'" % ' '.join([ll.replace(' ', '_')
-                                                    for ll in labs])
-        cmd += " %s" % outfname1
+        labels = ' '.join([ll.replace(' ', '_') for ll in labs])
+        cmd += f" -relabel_all_str '{labels}' {outfname1}"
         subprocess.call(cmd, shell=True)
     except Exception:
         pass
 
-    lab_f = Path(outfname).stem.replace('.nii', '') + '_label.txt'
-    lab_f = Path(outfname).parent / lab_f
+    lab_f = outfname.stem.replace('.nii', '') + '_label.txt'
+    lab_f = outfname.parent / lab_f
     open(lab_f, 'w').write('\n'.join(labs))
 
 
 # %% cluster_permutation ======================================================
 def cluster_permutation(F, Fperm_npy, maskV, OutPrefix='./', ananame='', NN=1,
-                        pthrs=[0.005, 0.001], athrs=[0.05, 0.01], Nproc=0,
-                        verb=True):
-    """Calculate cluster size threshold by permutation test"""
+                        pthrs=[0.005, 0.001], athrs=[0.05, 0.01], Nproc=0):
+    """
+    Calculate cluster size threshold by permutation test, and save the result
+    statistics in a file.
 
+    Parameters
+    ----------
+    F : TYPE
+        DESCRIPTION.
+    Fperm_npy : TYPE
+        DESCRIPTION.
+    maskV : TYPE
+        DESCRIPTION.
+    OutPrefix : TYPE, optional
+        DESCRIPTION. The default is './'.
+    ananame : TYPE, optional
+        DESCRIPTION. The default is ''.
+    NN : TYPE, optional
+        DESCRIPTION. The default is 1.
+    pthrs : TYPE, optional
+        DESCRIPTION. The default is [0.005, 0.001].
+    athrs : TYPE, optional
+        DESCRIPTION. The default is [0.05, 0.01].
+    Nproc : TYPE, optional
+        DESCRIPTION. The default is 0.
+    verb : TYPE, optional
+        DESCRIPTION. The default is True.
+
+    Returns
+    -------
+    None.
+
+    """
     # Prepare multiprocessing
     if Nproc == 0:
         Nproc = int(multiprocessing.cpu_count()/2)
@@ -947,24 +926,22 @@ def cluster_permutation(F, Fperm_npy, maskV, OutPrefix='./', ananame='', NN=1,
         ofile = OutPrefix + 'ClusterThrPerm.'
         if len(ananame):
             ofile += ananame + '.'
-        ofile += '%s.txt' % lab1
+        ofile += f'{lab1}.txt'
 
         ofile_pdist = ofile.replace('ClusterThrPerm.', 'Cluster_pdist.')
         ofile_pdist = ofile_pdist.replace('.txt', '.pkl')
-        if verb:
-            st = datetime.datetime.now()
-            dstr = str(st).split('.')[0]
-            print("-"*80)
-            msgstr = "+++ Cluster size permutation test for "
-            if len(ananame):
-                msgstr += ananame + ':'
-            msgstr += labs[ni]
-            print(msgstr, end='')
-            print(" (%s)" % dstr)
-            sys.stdout.flush()
 
-            print("Loading MDMR permutation results ...", end='')
-            sys.stdout.flush()
+        st = time.time()
+        print("-"*80)
+        msgstr = "+++ Cluster size permutation test for "
+        if len(ananame):
+            msgstr += ananame + ':'
+        msgstr += labs[ni] + f" ({time.ctime(st)})"
+        print(msgstr)
+        sys.stdout.flush()
+
+        print("Loading MDMR permutation results ...")
+        sys.stdout.flush()
 
         Fthr = {}
         Fperm = np.load(Fperm_npy[labs[ni]])
@@ -972,11 +949,8 @@ def cluster_permutation(F, Fperm_npy, maskV, OutPrefix='./', ananame='', NN=1,
         for pthr in pthrs:
             Fthr[pthr] = np.percentile(FperSort, (1.0-pthr)*100, axis=0)
 
-        if verb:
-            print(" done")
-
-            print("Runnning cluster size prmutation test ...")
-            sys.stdout.flush()
+        print("Runnning cluster size prmutation test ...")
+        sys.stdout.flush()
 
         clustSizeDist = {}
         clthresh = {}
@@ -1016,14 +990,16 @@ def cluster_permutation(F, Fperm_npy, maskV, OutPrefix='./', ananame='', NN=1,
 
         # Save in file
         wtxt = "# 1-sided thresholding\n"
-        wtxt += "# %d times permutation\n" % Nperm
-        wtxt += "# CLUSTER SIZE THRESHOLD(pthr,alpha) in Voxels\n"
-        wtxt += "# -NN %s  | alpha = Prob(Cluster >= given size)\n" % NN
-        wtxt += "#  pthr  | %s\n" % ' '.join(['%.5f' % a for a in athrs])
-        wtxt += "# ------ | %s\n" % ' '.join(['-------']*len(athrs))
+        wtxt += f"# {Nperm} times permutation\n"
+        wtxt += "# CLUSTER SIZE THRESHOLD (pthr, alpha) in Voxels\n"
+        wtxt += f"# -NN {NN}  | alpha = Prob(Cluster >= given size)\n"
+        pthstr = ' '.join([f'{a:.5f}' for a in athrs])
+        wtxt += f"#  pthr  | {pthstr}\n"
+        athstr = ' '.join(['-------']*len(athrs))
+        wtxt += f"# ------ | {athstr}\n"
         for pthr in pthrs:
-            cthstr = ' '.join(["%7.0f" % clthresh[pthr][a] for a in athrs])
-            wtxt += " %.6f  %s\n" % (pthr, cthstr)
+            cthstr = ' '.join([f"{clthresh[pthr][a]:7.0f}" for a in athrs])
+            wtxt += f" {pthr:.6f}  {cthstr}\n"
 
         with open(ofile, 'w') as fd:
             fd.write(wtxt)
@@ -1031,9 +1007,6 @@ def cluster_permutation(F, Fperm_npy, maskV, OutPrefix='./', ananame='', NN=1,
         with open(ofile_pdist, 'wb') as fd:
             pickle.dump(clustSizeDist, fd)
 
-        if verb:
-            et = datetime.datetime.now()
-            dstr = str(et).split('.')[0]
-            tt = str(et-st).split('.')[0]
-            print("done (%s, took %s)\n" % (dstr, tt))
-            sys.stdout.flush()
+        tt = str(timedelta(seconds=time.time()-st)).split('.')[0]
+        print(f"done ({time.ctime()}, took {tt})\n")
+        sys.stdout.flush()
