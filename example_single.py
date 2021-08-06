@@ -38,8 +38,7 @@ dala_list_f = work_dir / 'DataList.csv'
 # Mask file directory
 mask_dir = work_dir / 'masks'
 
-# Brain mask; brain mask
-brain_mask = mask_dir / 'MNI152_T1_2mm_brain_mask.nii.gz'
+# aseg mask in MNI
 aseg = mask_dir / 'aseg.nii.gz'
 
 # downsampling voxel size (mm)
@@ -89,8 +88,9 @@ if not gray_mask.is_file() or OVERWRITE:
 # Resample aseg gm mask in function image resolution
 gray_mask_res = mask_dir / 'MNI152_T1_2mm_gm_mask_res.nii.gz'
 if not gray_mask_res.is_file() or OVERWRITE:
+    ref_func_f = src_fnames[0]
     cmd = "3dfractionize -overwrite -clip 0.0"
-    cmd += f" -template {brain_mask} -input {gray_mask}"
+    cmd += f" -template {ref_func_f} -input {gray_mask}"
     cmd += f" -prefix {gray_mask_res}; "
     cmd += f"3drefit -view tlrc -space MNI {gray_mask_res}"
     subprocess.call(cmd, shell=True)
@@ -128,7 +128,7 @@ for si, srcf in enumerate(src_fnames):
         sys.stdout.flush()
 
 
-# %% --- Down-sampling gray matter mask ---
+# %% --- Downsampling gray matter mask ---
 OVERWRITE = False
 
 gray_mask_res_ds = mask_dir / f'MNI152_T1_2mm_gm_mask_res_{str(dxyz)}mm.nii.gz'
@@ -178,7 +178,7 @@ if not mask_MDMR.is_file() or OVERWRITE:
     subprocess.call(cmd, shell=True)
 
 
-# %% 3. Make/Laod PPI connectivity matrices ===================================
+# %% 3. Make/Laod connectivity matrices =======================================
 OVERWRITE = False
 
 st = time.time()
