@@ -133,8 +133,8 @@ OVERWRITE = False
 
 gray_mask_res_ds = mask_dir / f'MNI152_T1_2mm_gm_mask_res_{str(dxyz)}mm.nii.gz'
 if not gray_mask_res_ds.is_file() or OVERWRITE:
-    cmd = "3dfractionize -overwrite -clip 0.5 -template {res_fnames[0]}"
-    cmd += " -input {gray_mask_res} -prefix {gray_mask_res_ds}"
+    cmd = f"3dfractionize -overwrite -clip 0.5 -template {res_fnames[0]}"
+    cmd += f" -input {gray_mask_res} -prefix {gray_mask_res_ds}"
     subprocess.call(cmd, shell=True)
 
 # intersect of signal stdev mask
