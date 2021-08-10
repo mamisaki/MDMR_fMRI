@@ -280,7 +280,6 @@ nuisance[np.argwhere(['Sex' in v for v in varnames]).ravel()] = True
 nuisance[np.array(varnames) == '(Intercept)'] = True
 nuisance[np.array(varnames) == 'Age'] = True
 nuisance[np.array(varnames) == 'Motion'] = True
-nuisance[np.array(['SubjID' in v for v in varnames])] = True
 
 # Set in reg dict
 reg = {}
