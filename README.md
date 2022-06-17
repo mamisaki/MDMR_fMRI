@@ -1,5 +1,5 @@
 # Multidimensional Distance Matrix Regression (MDMR) analysis for fMRI
-Python library for multidimensional distance matrix regression (MDMR) analysis of fMRI data.
+Python library for multidimensional distance matrix regression (MDMR) analysis of fMRI data.  
 MDMR enables connectome-wide association analysis that explores the relationship between variables of interest, such as diagnosis groups and symptom scales, and whole-brain voxel-by-voxel functional connectivity without a priori hypothesis. The tool also provides longitudinal design models with example scripts.
 
 Please cite the study below when you use this script.
