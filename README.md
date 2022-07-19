@@ -1,9 +1,10 @@
 # Multidimensional Distance Matrix Regression (MDMR) analysis for fMRI
+Python library for multidimensional distance matrix regression (MDMR) analysis of fMRI data.  
+MDMR enables connectome-wide association analysis that explores the relationship between variables of interest, such as diagnosis groups and symptom scales, and whole-brain voxel-by-voxel functional connectivity without a priori hypothesis. The library also provides longitudinal design models with example scripts.
 
-Please cite the study below when you used this script.
+Please cite the study below when you use this script.
 
-
-Misaki, M., Phillips, R., Zotev, V., Wong, C.K., Wurfel, B.E., Krueger, F., Feldner, M., Bodurka, J., 2018. Real-time fMRI amygdala neurofeedback positive emotional training normalized resting-state functional connectivity in combat veterans with and without PTSD: a connectome-wide investigation. Neuroimage Clin 20, 543-555.
+[Misaki, M., Phillips, R., Zotev, V., Wong, C.K., Wurfel, B.E., Krueger, F., Feldner, M., Bodurka, J., 2018. Real-time fMRI amygdala neurofeedback positive emotional training normalized resting-state functional connectivity in combat veterans with and without PTSD: a connectome-wide investigation. Neuroimage Clin 20, 543-555.](https://www.sciencedirect.com/science/article/pii/S2213158218302663)
 
 ## INSTALL
 1. Download the package  
@@ -58,7 +59,7 @@ Refer example_longitudinal.py for an example script to run the longitudinal MDMR
     'whole_block': Items with the same index are exchanged as a block.  
       e.g. When exchBlk['whole_block'] = [1, 1, 2, 2, 3, 3], items [0, 1, 2, 3, 4, 5] will be permuted like [2, 3, 4, 5, 0, 1].  
             
-    When no exchangeability block is set, permutation randomly exchange the samples without a restriction.  
+    When no exchangeability block is set, permutation randomly exchanges the samples without a restriction.  
       
     Winkler, A.M., Webster, M.A., Vidaurre, D., Nichols, T.E. & Smith, S.M. Multi-level block permutation. Neuroimage 123, 253-268 (2015).  
 
