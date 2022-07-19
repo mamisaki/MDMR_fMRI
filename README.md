@@ -4,7 +4,7 @@ MDMR enables connectome-wide association analysis that explores the relationship
 
 Please cite the study below when you use this script.
 
-Misaki, M., Phillips, R., Zotev, V., Wong, C.K., Wurfel, B.E., Krueger, F., Feldner, M., Bodurka, J., 2018. Real-time fMRI amygdala neurofeedback positive emotional training normalized resting-state functional connectivity in combat veterans with and without PTSD: a connectome-wide investigation. Neuroimage Clin 20, 543-555.
+[Misaki, M., Phillips, R., Zotev, V., Wong, C.K., Wurfel, B.E., Krueger, F., Feldner, M., Bodurka, J., 2018. Real-time fMRI amygdala neurofeedback positive emotional training normalized resting-state functional connectivity in combat veterans with and without PTSD: a connectome-wide investigation. Neuroimage Clin 20, 543-555.](https://www.sciencedirect.com/science/article/pii/S2213158218302663)
 
 ## INSTALL
 1. Download the package  
