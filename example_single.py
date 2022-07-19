@@ -243,6 +243,7 @@ pandas2ri.activate()
 
 # --- Set model equation ---
 model = 'Diagnosis+Sex+Age+Motion'
+R('options(contrasts = c("contr.sum", "contr.poly"))')
 
 # --- Extract xdata from dala_list ---
 varnames0 = np.setdiff1d(np.unique(re.split(r'[\+|\*|:|-]', model)), '1')

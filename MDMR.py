@@ -839,26 +839,30 @@ def save_map_volume(outfname, F, pF, maskV, aff, pthrs=[0.005, 0.001]):
         List of p-value thresholds. The default is [0.005, 0.001].
 
     """
-    labs = sorted(F.keys())
-    FV = np.zeros(list(maskV.shape)+[len(F)])
-    for ni in range(len(F)):
-        Fn = FV[:, :, :, ni]
-        Fn[maskV > 0] = F[labs[ni]]
-        FV[:, :, :, ni] = Fn
+    labs = []
+    StatVs = np.zeros([*maskV.shape, 0])
+    for lab in F.keys():
+        # Stat map
+        V = np.zeros(maskV.shape)
+        V[maskV > 0] = F[lab]
+        StatVs = np.concatenate([StatVs, V[:, :, :, None]], axis=-1)
+        labs.append(lab)
 
-    # thresholded map
-    for ni in range(len(F)):
-        # uncorrected p
+        # p-value map
+        pV = np.zeros(maskV.shape)
+        pV[maskV > 0] = pF[lab]
+        StatVs = np.concatenate([StatVs, pV[:, :, :, None]], axis=-1)
+        labs.append(lab + '_p-value')
         for pthr in pthrs:
-            Fn = np.zeros(FV.shape[:3])
-            Fvals = F[labs[ni]].copy()
-            Fvals[pF[labs[ni]] > pthr] = 0
-            Fn[maskV > 0] = Fvals
-            FV = np.append(FV, Fn[:, :, :, np.newaxis], axis=3)
-            labs.append(labs[ni] + f'(p<{pthr})')
+            V = np.zeros(maskV.shape)
+            fval = F[lab]
+            fval[pF[lab] > pthr] = 0
+            V[maskV > 0] = fval
+            StatVs = np.concatenate([StatVs, V[:, :, :, None]], axis=-1)
+            labs.append(lab + f'(p<{pthr})')
 
     # Save volume and set volume labels and stat parameters
-    nim_out = nib.Nifti1Image(FV, aff)
+    nim_out = nib.Nifti1Image(StatVs.astype(np.float32), aff)
     nib.save(nim_out, outfname)
 
     # Set volume labels
@@ -867,8 +871,9 @@ def save_map_volume(outfname, F, pF, maskV, aff, pthrs=[0.005, 0.001]):
         outfname1 = outfname.parent / \
             outfname.name.replace('.nii', '_afni.nii')
         labs = [re.sub(r'\d\d_', '', ll) for ll in labs]
-        cmd = f"3dcopy {outfname} {outfname1}; "
-        cmd += '3drefit -fim'
+        cmd = f"3dcopy -overwrite {outfname} {outfname1}; "
+        subprocess.call(cmd, shell=True)
+        cmd = '3drefit -fim'
         labels = ' '.join([ll.replace(' ', '_') for ll in labs])
         cmd += f" -relabel_all_str '{labels}' {outfname1}"
         subprocess.call(cmd, shell=True)
