@@ -23,6 +23,7 @@ from scipy.spatial.distance import pdist, squareform
 from scipy.linalg import svd
 from scipy import ndimage
 import nibabel as nib
+import rpy2.robjects as robjects
 
 
 # %% _count_clustsize =========================================================
@@ -370,11 +371,11 @@ def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
     exchBlk : dictionar of array, optional
         'within_block': Items with the same index are exchanged.
             e.g. When exchBlk['within_block'] = [1, 1, 2, 2, 3, 3],
-            items [0, 1, 2, 3, 4, 5] will be permuted like [1, 0, 3, 2, 5, 4].
+            items [0, 1, 2, 3, 4, 5] will be permutated like [1, 0, 3, 2, 5, 4].
         'whole_block': Items with the same index are exchanged as a block.
             e.g. When exchBlk['whole_block'] = [1, 1, 2, 2, 3, 3],
-            items [0, 1, 2, 3, 4, 5] will be permuted like [2, 3, 4, 5, 0, 1].
-        The default is {} means all items are permuted without a restriction.
+            items [0, 1, 2, 3, 4, 5] will be permutated like [2, 3, 4, 5, 0, 1].
+        The default is {} means all items are permutated without a restriction.
     metric : str, optional
         Distance metric (see scipy.spatial.distance.pdist).
         The default is 'euclidean'.
@@ -397,7 +398,7 @@ def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
     pF : disct of array
         p-value maps.
     Fperm : disct of array
-        F-values with permuted regressors.
+        F-values with permutated regressors.
     maskrm : array
         Masked out voxel indices.
 
@@ -477,7 +478,7 @@ def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
                               dtype=np.float32)
         else:
             # small volume MDMR mask is used
-            Ychunk = np.zeros([len(ConnMtx), len(cols), len(rows)],
+            Ychunk = np.zeros([len(ConnMtx), len(cols)-1, len(rows)],
                               dtype=np.float32)
 
         for si, cmtx in tqdm(enumerate(ConnMtx), total=len(ConnMtx),
@@ -489,15 +490,21 @@ def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
                 else:
                     connMtx = cmtx.copy()
 
-                if rmdiag:
+                if rmdiag and V == V2:
                     # Reaplce diagonal with 0
                     connMtx -= np.diag(np.diag(connMtx))
 
                 if len(maskrm):
                     # Remove voxels with nan
-                    connMtx = np.delete(connMtx, maskrm, axis=0)
-                    connMtx = np.delete(connMtx, maskrm, axis=1)
-
+                    if maskrm.ndim == 1:
+                        connMtx = np.delete(connMtx, maskrm, axis=0)
+                        connMtx = np.delete(connMtx, maskrm, axis=1)
+                    else:
+                        connMtx_list = []
+                        for r, c in maskrm:
+                            conn = np.delete(connMtx[r, :], c)
+                            connMtx_list.append(conn.reshape([1, -1]))
+                        connMtx = np.concatenate(connMtx_list, axis=0)
             else:
                 # Read partial
                 if cmtx.ndim == 1:
@@ -548,8 +555,8 @@ def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
     U, S, Vt = svd(X, full_matrices=False)
     H = np.dot(U, U.T)
 
-    # Prepare permuted H
-    vHp = {}  # vectorized H for permuted samples (1st sample is true sample)
+    # Prepare permutated H
+    vHp = {}  # vectorized H for permutated samples (1st sample is true sample)
     sortedLabels = []
 
     # -- Initialize vectorized Hat, Residual, and G matrices with true sample -
@@ -596,7 +603,7 @@ def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
             H2 = H-Hn
             vHp[lab][0, :] = H2.flatten()
 
-    # -- Make permuted regressor matrices -------------------------------------
+    # -- Make permutated regressor matrices -------------------------------------
     # Xn: nuisance regressors
     Xn = X[:, np.nonzero(nuisance)[0]]
     # Xi: effect of interest regressors
@@ -612,7 +619,7 @@ def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
         perpat[ei] = np.array([','.join([str(v) for v in Xi[:, ei]])])
 
     for pn in tqdm(range(1, permnum), total=permnum-1,
-                   desc='Preparing permuted regressors'):
+                   desc='Preparing permutated regressors'):
         # Search unique random permutation
         retry = True  # loop flag
         nt = 1  # number of tries
@@ -634,7 +641,7 @@ def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
                 # Permute whole exchangeability block (keep within block order)
                 blist = exchBlk['whole_block']
                 bidx = np.unique(blist)
-                pbidx = np.random.permutation(bidx)  # permuted block id
+                pbidx = np.random.permutation(bidx)  # permutated block id
 
                 permidx1 = np.zeros(len(permidx), dtype=np.int)
                 for bi in pbidx:
@@ -643,7 +650,7 @@ def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
                     # permuting block ID (bi's position is moved to pbi's
                     # position)
                     pbi = pbidx[bidx == bi][0]
-                    # permuted positions of block ID bi
+                    # permutated positions of block ID bi
                     p1 = np.nonzero(blist == pbi)[0]
                     permidx1[p1] = permidx[p0]
 
@@ -674,7 +681,7 @@ def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
             # Could not find a unique permutation for MaxTry times
             break
 
-        # Make permuted design matrix
+        # Make permutated design matrix
         Xp = np.ndarray(X.shape, dtype=np.float32)
         Xp[:, np.nonzero(nuisance)[0]] = Xn
         Xp[:, np.nonzero(np.logical_not(nuisance))[0]] = Xio[permidx, :]
@@ -819,7 +826,7 @@ def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
 
 
 # %% save_map_volume ==========================================================
-def save_map_volume(outfname, F, pF, maskV, aff, pthrs=[0.005, 0.001]):
+def save_map_volume(outfname, F, pF, maskV, aff, pthrs=[0.005, 0.001], FDRths=None):
     """
     Save statistical maps in a nii.gz file.
 
@@ -837,8 +844,10 @@ def save_map_volume(outfname, F, pF, maskV, aff, pthrs=[0.005, 0.001]):
         Affine matrix for the saved image.
     pthrs : list of float, optional
         List of p-value thresholds. The default is [0.005, 0.001].
-
+    FDRths : list of float, optional
+        List of FDR thresholds. The default is None.
     """
+
     labs = []
     StatVs = np.zeros([*maskV.shape, 0])
     for lab in F.keys():
@@ -860,6 +869,17 @@ def save_map_volume(outfname, F, pF, maskV, aff, pthrs=[0.005, 0.001]):
             V[maskV > 0] = fval
             StatVs = np.concatenate([StatVs, V[:, :, :, None]], axis=-1)
             labs.append(lab + f'(p<{pthr})')
+
+        if FDRths is not None:
+            robjects.r.assign('pvals', pF[lab])
+            qvals = robjects.r('p.adjust(pvals, method = "BH")')
+            for fdrth in FDRths:
+                V = np.zeros(maskV.shape)
+                fval = F[lab]
+                fval[qvals > fdrth] = 0
+                V[maskV > 0] = fval
+                StatVs = np.concatenate([StatVs, V[:, :, :, None]], axis=-1)
+                labs.append(lab + f'(FDRq<{fdrth})')
 
     # Save volume and set volume labels and stat parameters
     nim_out = nib.Nifti1Image(StatVs.astype(np.float32), aff)
