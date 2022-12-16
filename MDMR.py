@@ -118,6 +118,11 @@ def connectivity_matrix(srcV, maskV=None, SVCmask=None, cast_float32=True):
             assert np.all(SVCmask.shape == srcV.shape[:3]), errmsg
 
         SVCmask_flat = SVCmask.flatten()
+        svc_overlap_idx = []
+        mask_idx = np.argwhere(mask_flat).ravel()
+        for svcmsk_idx in np.argwhere(SVCmask_flat):
+            ci = np.argwhere(mask_idx == svcmsk_idx).ravel()[0]
+            svc_overlap_idx.append(ci)
 
     # Apply mask
     src_flat = src_flat_all[mask_flat > 0, :]
@@ -126,7 +131,6 @@ def connectivity_matrix(srcV, maskV=None, SVCmask=None, cast_float32=True):
 
     del src_flat_all
 
-    # --- PPI connectivity ---
     if SVCmask is None:
         # All voxel x voxel
         # 1 - (correlation pdst) = 1-(1-r) = r
@@ -135,7 +139,12 @@ def connectivity_matrix(srcV, maskV=None, SVCmask=None, cast_float32=True):
         # voxels in SVC mask x all voxels
         allz = zscore(src_flat, axis=1)
         svcz = zscore(SVC_src_flat, axis=1)
-        connmtx = np.dot(svcz, allz.T)/svcz.shape[1]
+        connmtx0 = np.dot(svcz, allz.T)/svcz.shape[1]
+        connmtx_rows = []
+        for ri, row in enumerate(connmtx0):
+            cmtx_row = np.delete(row, svc_overlap_idx[ri])
+            connmtx_rows.append(np.reshape(cmtx_row, [1, -1]))
+        connmtx = np.concatenate(connmtx_rows, axis=0)
         connmtx[np.abs(connmtx) >= 1.0] = np.nan
 
     zconnmtx = np.arctanh(connmtx)
@@ -338,12 +347,14 @@ def _check_nan_connectivity(ConnMtx):
         # find rows (voxels) with all nan (True in dmaskMtx)
         delvi = np.nonzero(np.all(dmaskMtx, axis=1))[0]
         del dmaskMtx
+        del_ri = None
     else:
         # find nan indices (True in dmaskMtx)
-        delvi = np.nonzero(dmask)
-        delvi = np.array([[i, j] for i, j in zip(delvi[0], delvi[1])])
+        delvi = np.nonzero(np.any(dmask, axis=0))[0]
+        dmask[:, delvi] = True
+        del_ri = np.nonzero(np.all(dmask, axis=1))[0]
 
-    return delvi
+    return delvi, del_ri
 
 
 # %% run_MDMR =================================================================
@@ -418,7 +429,7 @@ def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
             regnames.append(f'var{xi+1}')
 
     # Check nan in connectivity matrices
-    maskrm = _check_nan_connectivity(ConnMtx)
+    maskrm, del_ri = _check_nan_connectivity(ConnMtx)
     """
     Connectivity within the same voxel is NaN so that the same number of
     connectivity as row size of ConnMtx (number of source voxels) could be in
@@ -467,19 +478,17 @@ def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
         vn = vend-vst
         rows = range(vst, vend)
         cols = range(V2)
-        if maskrm.ndim == 1:
-            # exclude voxels with NaN
-            rows = np.setdiff1d(rows, maskrm)
-            cols = np.setdiff1d(cols, maskrm)
 
-        if V == V2:
-            # all pairwise correlation
-            Ychunk = np.zeros([len(ConnMtx), len(cols), len(rows)],
-                              dtype=np.float32)
-        else:
-            # small volume MDMR mask is used
-            Ychunk = np.zeros([len(ConnMtx), len(cols)-1, len(rows)],
-                              dtype=np.float32)
+        # exclude voxels with NaN
+        rows = np.setdiff1d(rows, maskrm)
+        if del_ri is None:  # no SVC
+            cols = np.setdiff1d(cols, maskrm)
+        else:  # with SVC
+            cols = np.setdiff1d(cols, del_ri)
+
+        # all pairwise correlation
+        Ychunk = np.zeros([len(ConnMtx), len(cols), len(rows)],
+                          dtype=np.float32)
 
         for si, cmtx in tqdm(enumerate(ConnMtx), total=len(ConnMtx),
                              desc='Loading connectivity maps'):
@@ -496,15 +505,11 @@ def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
 
                 if len(maskrm):
                     # Remove voxels with nan
-                    if maskrm.ndim == 1:
-                        connMtx = np.delete(connMtx, maskrm, axis=0)
+                    connMtx = np.delete(connMtx, maskrm, axis=0)
+                    if del_ri is None:  # no SVC
                         connMtx = np.delete(connMtx, maskrm, axis=1)
-                    else:
-                        connMtx_list = []
-                        for r, c in maskrm:
-                            conn = np.delete(connMtx[r, :], c)
-                            connMtx_list.append(conn.reshape([1, -1]))
-                        connMtx = np.concatenate(connMtx_list, axis=0)
+                    else:  # with SVC
+                        connMtx = np.delete(connMtx, del_ri, axis=1)
             else:
                 # Read partial
                 if cmtx.ndim == 1:
@@ -513,12 +518,12 @@ def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
                     ixgrid = np.ix_(rows, cols)
                     connMtx = cmtx[ixgrid]
 
-                if rmdiag:
+                if rmdiag and V == V2:
                     # Reaplce diagonal with 0
                     diag_mask = np.concatenate(
                         [(cols == ri)[None, :] for ri in rows], axis=0)
                     connMtx[diag_mask] = 0.0
-
+                
             Ychunk[si, :, :] = connMtx.T
             del connMtx
 
