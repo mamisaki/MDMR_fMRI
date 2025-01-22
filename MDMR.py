@@ -382,11 +382,11 @@ def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
     exchBlk : dictionar of array, optional
         'within_block': Items with the same index are exchanged.
             e.g. When exchBlk['within_block'] = [1, 1, 2, 2, 3, 3],
-            items [0, 1, 2, 3, 4, 5] will be permutated like [1, 0, 3, 2, 5, 4].
+            items [0, 1, 2, 3, 4, 5] will be permuted like [1, 0, 3, 2, 5, 4].
         'whole_block': Items with the same index are exchanged as a block.
             e.g. When exchBlk['whole_block'] = [1, 1, 2, 2, 3, 3],
-            items [0, 1, 2, 3, 4, 5] will be permutated like [2, 3, 4, 5, 0, 1].
-        The default is {} means all items are permutated without a restriction.
+            items [0, 1, 2, 3, 4, 5] will be permuted like [2, 3, 4, 5, 0, 1].
+        The default is {} means all items are permuted without a restriction.
     metric : str, optional
         Distance metric (see scipy.spatial.distance.pdist).
         The default is 'euclidean'.
@@ -409,7 +409,7 @@ def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
     pF : disct of array
         p-value maps.
     Fperm : disct of array
-        F-values with permutated regressors.
+        F-values with permuted regressors.
     maskrm : array
         Masked out voxel indices.
 
@@ -560,8 +560,8 @@ def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
     U, S, Vt = svd(X, full_matrices=False)
     H = np.dot(U, U.T)
 
-    # Prepare permutated H
-    vHp = {}  # vectorized H for permutated samples (1st sample is true sample)
+    # Prepare permuted H
+    vHp = {}  # vectorized H for permuted samples (1st sample is true sample)
     sortedLabels = []
 
     # -- Initialize vectorized Hat, Residual, and G matrices with true sample -
@@ -608,7 +608,7 @@ def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
             H2 = H-Hn
             vHp[lab][0, :] = H2.flatten()
 
-    # -- Make permutated regressor matrices -------------------------------------
+    # -- Make permuted regressor matrices -------------------------------------
     # Xn: nuisance regressors
     Xn = X[:, np.nonzero(nuisance)[0]]
     # Xi: effect of interest regressors
@@ -624,7 +624,7 @@ def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
         perpat[ei] = np.array([','.join([str(v) for v in Xi[:, ei]])])
 
     for pn in tqdm(range(1, permnum), total=permnum-1,
-                   desc='Preparing permutated regressors'):
+                   desc='Preparing permuted regressors'):
         # Search unique random permutation
         retry = True  # loop flag
         nt = 1  # number of tries
@@ -646,7 +646,7 @@ def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
                 # Permute whole exchangeability block (keep within block order)
                 blist = exchBlk['whole_block']
                 bidx = np.unique(blist)
-                pbidx = np.random.permutation(bidx)  # permutated block id
+                pbidx = np.random.permutation(bidx)  # permuted block id
 
                 permidx1 = np.zeros(len(permidx), dtype=np.int)
                 for bi in pbidx:
@@ -655,7 +655,7 @@ def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
                     # permuting block ID (bi's position is moved to pbi's
                     # position)
                     pbi = pbidx[bidx == bi][0]
-                    # permutated positions of block ID bi
+                    # permuted positions of block ID bi
                     p1 = np.nonzero(blist == pbi)[0]
                     permidx1[p1] = permidx[p0]
 
@@ -686,7 +686,7 @@ def run_MDMR(ConnMtx, X, regnames=[], nuisance=[], contrast={}, permnum=10000,
             # Could not find a unique permutation for MaxTry times
             break
 
-        # Make permutated design matrix
+        # Make permuted design matrix
         Xp = np.ndarray(X.shape, dtype=np.float32)
         Xp[:, np.nonzero(nuisance)[0]] = Xn
         Xp[:, np.nonzero(np.logical_not(nuisance))[0]] = Xio[permidx, :]
